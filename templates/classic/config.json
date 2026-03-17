@@ -1,7 +1,7 @@
 {
   "name": "قناة القسطل الاخبارية",
   "template_path": "templates/classic/template.png",
-  "font_bold_path": "Cairo-Bold.ttf",
+  "font_bold_path": "HEADLINERBOLD.otf",
 
   "max_font_size": 110,
   "min_font_size": 58,
