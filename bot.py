@@ -24,6 +24,9 @@ from telegram.ext import (
 
 # ===================== Paths =====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+font_path = os.path.join(BASE_DIR, "Tajawal-Bold.ttf")
+
+font = ImageFont.truetype(font_path, 70)
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 PILLOW_HAS_RAQM = bool(features.check("raqm"))
 
