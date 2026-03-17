@@ -111,15 +111,19 @@ def reshape_ar(text: str) -> str:
     return get_display(arabic_reshaper.reshape(text))
 
 
-def get_text_render_parts(text: str, reshape_enabled: bool = True):
+def get_text_render_parts(text: str, reshape_enabled: bool = True, prefer_raqm: bool = True):
     has_arabic = _count_arabic_chars(text) > 0
-    if reshape_enabled and has_arabic and PILLOW_HAS_RAQM:
+    if reshape_enabled and prefer_raqm and has_arabic and PILLOW_HAS_RAQM:
         return text, {"direction": "rtl", "language": "ar"}
     return (reshape_ar(text) if reshape_enabled else text), {}
 
 
-def prepare_text(text: str, reshape_enabled: bool = True) -> str:
-    rendered_text, _ = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+def prepare_text(text: str, reshape_enabled: bool = True, prefer_raqm: bool = True) -> str:
+    rendered_text, _ = get_text_render_parts(
+        text,
+        reshape_enabled=reshape_enabled,
+        prefer_raqm=prefer_raqm,
+    )
     return rendered_text
 
 
@@ -128,8 +132,13 @@ def text_length(
     text: str,
     font: ImageFont.FreeTypeFont,
     reshape_enabled: bool = True,
+    prefer_raqm: bool = True,
 ):
-    rendered_text, draw_kwargs = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+    rendered_text, draw_kwargs = get_text_render_parts(
+        text,
+        reshape_enabled=reshape_enabled,
+        prefer_raqm=prefer_raqm,
+    )
     return draw.textlength(rendered_text, font=font, **draw_kwargs)
 
 
@@ -138,8 +147,13 @@ def text_bbox(
     text: str,
     font: ImageFont.FreeTypeFont,
     reshape_enabled: bool = True,
+    prefer_raqm: bool = True,
 ):
-    rendered_text, draw_kwargs = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+    rendered_text, draw_kwargs = get_text_render_parts(
+        text,
+        reshape_enabled=reshape_enabled,
+        prefer_raqm=prefer_raqm,
+    )
     bbox = draw.textbbox((0, 0), rendered_text, font=font, **draw_kwargs)
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
@@ -416,6 +430,21 @@ def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[st
     return primary_path or fallback_path
 
 
+def find_linux_arabic_font() -> Optional[str]:
+    candidates = [
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf",
+        "/usr/share/fonts/opentype/noto/NotoNaskhArabic-Bold.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansArabic-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def load_templates() -> dict:
     templates = {}
     disabled_templates = {"mubasher"}
@@ -456,8 +485,6 @@ def load_templates() -> dict:
             cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
         if cfg.get("caption_font_bold_path"):
             cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
-        if cfg.get("name_arabic_font_bold_path"):
-            cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
 
         if not os.path.isfile(cfg["template_path"]):
             for candidate in ("template.png", "template.jpg", "template.jpeg", "template.webp"):
@@ -486,10 +513,6 @@ def load_templates() -> dict:
 
         if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
             print(f"[Templates] caption font not found for '{folder}': {cfg['caption_font_bold_path']}")
-            continue
-
-        if cfg.get("name_arabic_font_bold_path") and not os.path.isfile(cfg["name_arabic_font_bold_path"]):
-            print(f"[Templates] arabic name font not found for '{folder}': {cfg['name_arabic_font_bold_path']}")
             continue
 
         image_mode = cfg.get("image_mode", "full")
@@ -559,6 +582,7 @@ def draw_centered_text_block(
     min_font_size: int,
     max_lines: int = 2,
     reshape_enabled: bool = True,
+    prefer_raqm: bool = True,
 ):
     l, t, r, b = box
     box_w, box_h = r - l, b - t
@@ -587,7 +611,13 @@ def draw_centered_text_block(
         widths = []
         heights = []
         for ln in lines:
-            wpx, hpx = text_bbox(draw, ln, font, reshape_enabled=reshape_enabled)
+            wpx, hpx = text_bbox(
+                draw,
+                ln,
+                font,
+                reshape_enabled=reshape_enabled,
+                prefer_raqm=prefer_raqm,
+            )
             widths.append(wpx)
             heights.append(hpx)
 
@@ -604,14 +634,27 @@ def draw_centered_text_block(
 
     font = ImageFont.truetype(font_path, font_size)
     if not final_heights:
-        final_heights = [text_bbox(draw, ln, font, reshape_enabled=reshape_enabled)[1] for ln in final_lines]
+        final_heights = [
+            text_bbox(
+                draw,
+                ln,
+                font,
+                reshape_enabled=reshape_enabled,
+                prefer_raqm=prefer_raqm,
+            )[1]
+            for ln in final_lines
+        ]
         final_spacing = max(8, int(font_size * 0.10))
 
     total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
     y = t + max(0, (box_h - total_h) // 2)
 
     for i, ln in enumerate(final_lines):
-        rendered_text, draw_kwargs = get_text_render_parts(ln, reshape_enabled=reshape_enabled)
+        rendered_text, draw_kwargs = get_text_render_parts(
+            ln,
+            reshape_enabled=reshape_enabled,
+            prefer_raqm=prefer_raqm,
+        )
         wpx = draw.textlength(rendered_text, font=font, **draw_kwargs)
         x = l + (box_w - wpx) / 2
         sx, sy = shadow_offset
@@ -836,14 +879,17 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
-<<<<<<< HEAD
             if os.name != "nt" and not PILLOW_HAS_RAQM:
-                fallback_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
-                if fallback_font_path and os.path.isfile(fallback_font_path):
-                    name_font_path = fallback_font_path
-=======
+                linux_arabic_font = find_linux_arabic_font()
+                if linux_arabic_font:
+                    print(f"[Arabic] Using Linux fallback font for name: {linux_arabic_font}")
+                    name_font_path = linux_arabic_font
+                else:
+                    fallback_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
+                    if fallback_font_path and os.path.isfile(fallback_font_path):
+                        print(f"[Arabic] Linux fallback font not found, using template font: {fallback_font_path}")
+                        name_font_path = fallback_font_path
         name_font_path = ensure_existing_path(name_font_path, font_bold_path)
->>>>>>> 7a72b842dc93268c12d5e5e55f8a8d23e93493b3
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
         name_shadow_color = tuple(template_cfg.get("name_shadow_color", template_cfg.get("shadow_color", [0, 0, 0, 140])))
         name_shadow_offset = tuple(template_cfg.get("name_shadow_offset", template_cfg.get("shadow_offset", [2, 3])))
@@ -878,6 +924,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                     min_font_size=name_min_font_size,
                     max_lines=name_max_lines,
                     reshape_enabled=name_reshape_text,
+                    prefer_raqm=False,
                 )
         else:
             draw_centered_text_block(
@@ -892,6 +939,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 min_font_size=name_min_font_size,
                 max_lines=name_max_lines,
                 reshape_enabled=name_reshape_text,
+                prefer_raqm=False,
             )
 
     if not bool(template_cfg.get("render_text", True)):
@@ -1056,14 +1104,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "أهلاً 👋\nاختار القالب:",
         reply_markup=templates_keyboard(templates),
     )
-
-
-def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[str] = None) -> Optional[str]:
-    if primary_path and os.path.isfile(primary_path):
-        return primary_path
-    if fallback_path and os.path.isfile(fallback_path):
-        return fallback_path
-    return primary_path or fallback_path 
 
 async def templates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     templates = get_templates(context)
