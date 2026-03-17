@@ -4,7 +4,7 @@
   "requires_name": true,
   "requires_text": false,
   "render_text": false,
-  "select_prompt": "ابعت الصورة أولاً، وبعدها سأطلب منك الاسم.",
+  "select_prompt": "ارسل صورتك لنصمم لك بطاقة عيد مميزة.",
   "after_photo_prompt": "اكتب اسمك ليظهر على التصميم.",
   "template_path": "templates/new/WhatsApp Image 2026-03-16 at 1.40.14 PM.jpeg",
   "font_bold_path": "templates/new/PAYKAN-BOLD.OTF",
