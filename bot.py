@@ -464,10 +464,14 @@ def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[st
 
 def find_linux_arabic_font() -> Optional[str]:
     candidates = [
+        "/usr/share/fonts/truetype/noto/NotoKufiArabic-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf",
+        "/usr/share/fonts/opentype/noto/NotoKufiArabic-Bold.ttf",
         "/usr/share/fonts/opentype/noto/NotoNaskhArabic-Bold.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansArabic-Bold.ttf",
+        "/usr/share/fonts/truetype/fonts-arabeyes/ae_AlArabiya.ttf",
+        "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
     ]
@@ -931,6 +935,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         name_reshape_text = bool(template_cfg.get("name_reshape_text", True))
         name_prefer_raqm = bool(template_cfg.get("name_prefer_raqm", True))
         name_prefer_linux_system_font = bool(template_cfg.get("name_prefer_linux_system_font", False))
+        using_linux_system_font = False
         if _count_arabic_chars(text) > 0 and template_cfg.get("name_arabic_font_bold_path"):
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
@@ -944,7 +949,8 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 if linux_arabic_font:
                     print(f"[Arabic] Using preferred Linux system font for name: {linux_arabic_font}")
                     name_font_path = linux_arabic_font
-            if not PILLOW_HAS_RAQM and template_cfg.get("name_no_raqm_font_bold_path"):
+                    using_linux_system_font = True
+            if not PILLOW_HAS_RAQM and template_cfg.get("name_no_raqm_font_bold_path") and not using_linux_system_font:
                 name_font_path = template_cfg.get("name_no_raqm_font_bold_path", name_font_path)
             configured_name_font_exists = bool(name_font_path and os.path.isfile(name_font_path))
             if os.name != "nt" and not PILLOW_HAS_RAQM and not configured_name_font_exists:
@@ -952,6 +958,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 if linux_arabic_font:
                     print(f"[Arabic] Using Linux fallback font for name: {linux_arabic_font}")
                     name_font_path = linux_arabic_font
+                    using_linux_system_font = True
                 else:
                     fallback_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
                     if fallback_font_path and os.path.isfile(fallback_font_path):
