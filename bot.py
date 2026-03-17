@@ -6,7 +6,7 @@ import tempfile
 from io import BytesIO
 from typing import Optional, List
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
 
 import arabic_reshaper
 from bidi.algorithm import get_display
@@ -25,6 +25,7 @@ from telegram.ext import (
 # ===================== Paths =====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+PILLOW_HAS_RAQM = bool(features.check("raqm"))
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -110,8 +111,26 @@ def reshape_ar(text: str) -> str:
     return get_display(arabic_reshaper.reshape(text))
 
 
+def get_text_render_parts(text: str, reshape_enabled: bool = True):
+    has_arabic = _count_arabic_chars(text) > 0
+    if reshape_enabled and has_arabic and PILLOW_HAS_RAQM:
+        return text, {"direction": "rtl", "language": "ar"}
+    return (reshape_ar(text) if reshape_enabled else text), {}
+
+
 def prepare_text(text: str, reshape_enabled: bool = True) -> str:
-    return reshape_ar(text) if reshape_enabled else text
+    rendered_text, _ = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+    return rendered_text
+
+
+def text_length(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    reshape_enabled: bool = True,
+):
+    rendered_text, draw_kwargs = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+    return draw.textlength(rendered_text, font=font, **draw_kwargs)
 
 
 def text_bbox(
@@ -120,8 +139,8 @@ def text_bbox(
     font: ImageFont.FreeTypeFont,
     reshape_enabled: bool = True,
 ):
-    shaped = prepare_text(text, reshape_enabled=reshape_enabled)
-    bbox = draw.textbbox((0, 0), shaped, font=font)
+    rendered_text, draw_kwargs = get_text_render_parts(text, reshape_enabled=reshape_enabled)
+    bbox = draw.textbbox((0, 0), rendered_text, font=font, **draw_kwargs)
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
@@ -425,6 +444,8 @@ def load_templates() -> dict:
 
         if cfg.get("name_font_bold_path"):
             cfg["name_font_bold_path"] = resolve_path(cfg["name_font_bold_path"])
+        if cfg.get("name_arabic_font_bold_path"):
+            cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
         if cfg.get("caption_font_bold_path"):
             cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
 
@@ -446,6 +467,12 @@ def load_templates() -> dict:
         if cfg.get("name_font_bold_path") and not os.path.isfile(cfg["name_font_bold_path"]):
             print(f"[Templates] name font not found for '{folder}': {cfg['name_font_bold_path']}")
             continue
+        if cfg.get("name_arabic_font_bold_path") and not os.path.isfile(cfg["name_arabic_font_bold_path"]):
+            print(
+                f"[Templates] arabic name font not found for '{folder}': "
+                f"{cfg['name_arabic_font_bold_path']} - falling back to name_font_bold_path"
+            )
+            cfg["name_arabic_font_bold_path"] = cfg.get("name_font_bold_path", cfg["font_bold_path"])
 
         if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
             print(f"[Templates] caption font not found for '{folder}': {cfg['caption_font_bold_path']}")
@@ -570,12 +597,12 @@ def draw_centered_text_block(
     y = t + max(0, (box_h - total_h) // 2)
 
     for i, ln in enumerate(final_lines):
-        shaped = prepare_text(ln, reshape_enabled=reshape_enabled)
-        wpx = draw.textlength(shaped, font=font)
+        rendered_text, draw_kwargs = get_text_render_parts(ln, reshape_enabled=reshape_enabled)
+        wpx = draw.textlength(rendered_text, font=font, **draw_kwargs)
         x = l + (box_w - wpx) / 2
         sx, sy = shadow_offset
-        draw.text((x + sx, y + sy), shaped, font=font, fill=shadow_color)
-        draw.text((x, y), shaped, font=font, fill=text_color)
+        draw.text((x + sx, y + sy), rendered_text, font=font, fill=shadow_color, **draw_kwargs)
+        draw.text((x, y), rendered_text, font=font, fill=text_color, **draw_kwargs)
         y += final_heights[i] + final_spacing
 
 
@@ -795,6 +822,10 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
+            if os.name != "nt" and not PILLOW_HAS_RAQM:
+                fallback_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
+                if fallback_font_path and os.path.isfile(fallback_font_path):
+                    name_font_path = fallback_font_path
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
         name_shadow_color = tuple(template_cfg.get("name_shadow_color", template_cfg.get("shadow_color", [0, 0, 0, 140])))
         name_shadow_offset = tuple(template_cfg.get("name_shadow_offset", template_cfg.get("shadow_offset", [2, 3])))
@@ -972,8 +1003,8 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             final_spacing = max(final_spacing, available_spacing // (len(final_lines) - 1))
 
     for i, ln in enumerate(final_lines):
-        shaped = reshape_ar(ln)
-        wpx = draw.textlength(shaped, font=font)
+        rendered_text, draw_kwargs = get_text_render_parts(ln)
+        wpx = draw.textlength(rendered_text, font=font, **draw_kwargs)
 
         if text_align == "right":
             x = r - wpx
@@ -983,9 +1014,9 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             x = l + (box_w - wpx) / 2
 
         sx, sy = shadow_offset
-        draw.text((x + sx, y + sy), shaped, font=font, fill=shadow_color)
-        draw.text((x + 1, y + 1), shaped, font=font, fill=(0, 0, 0, 90))
-        draw.text((x, y), shaped, font=font, fill=text_color)
+        draw.text((x + sx, y + sy), rendered_text, font=font, fill=shadow_color, **draw_kwargs)
+        draw.text((x + 1, y + 1), rendered_text, font=font, fill=(0, 0, 0, 90), **draw_kwargs)
+        draw.text((x, y), rendered_text, font=font, fill=text_color, **draw_kwargs)
 
         y += final_heights[i] + final_spacing
 
@@ -1008,6 +1039,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=templates_keyboard(templates),
     )
 
+
+def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[str] = None) -> Optional[str]:
+    if primary_path and os.path.isfile(primary_path):
+        return primary_path
+    if fallback_path and os.path.isfile(fallback_path):
+        return fallback_path
+    return primary_path or fallback_path 
 
 async def templates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     templates = get_templates(context)
