@@ -930,11 +930,20 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         name_render_engine = str(template_cfg.get("name_render_engine", "")).lower()
         name_reshape_text = bool(template_cfg.get("name_reshape_text", True))
         name_prefer_raqm = bool(template_cfg.get("name_prefer_raqm", True))
+        name_prefer_linux_system_font = bool(template_cfg.get("name_prefer_linux_system_font", False))
         if _count_arabic_chars(text) > 0 and template_cfg.get("name_arabic_font_bold_path"):
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
             name_prefer_raqm = bool(template_cfg.get("name_arabic_prefer_raqm", name_prefer_raqm))
+            name_prefer_linux_system_font = bool(
+                template_cfg.get("name_arabic_prefer_linux_system_font", name_prefer_linux_system_font)
+            )
+            if os.name != "nt" and name_prefer_linux_system_font:
+                linux_arabic_font = find_linux_arabic_font()
+                if linux_arabic_font:
+                    print(f"[Arabic] Using preferred Linux system font for name: {linux_arabic_font}")
+                    name_font_path = linux_arabic_font
             if not PILLOW_HAS_RAQM and template_cfg.get("name_no_raqm_font_bold_path"):
                 name_font_path = template_cfg.get("name_no_raqm_font_bold_path", name_font_path)
             configured_name_font_exists = bool(name_font_path and os.path.isfile(name_font_path))
@@ -961,6 +970,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 render_engine=name_render_engine,
                 reshape=name_reshape_text,
                 prefer_raqm=name_prefer_raqm,
+                prefer_linux_system_font=name_prefer_linux_system_font,
                 max_lines=int(template_cfg.get("name_max_lines", 2)),
             )
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
