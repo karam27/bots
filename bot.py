@@ -924,7 +924,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                     min_font_size=name_min_font_size,
                     max_lines=name_max_lines,
                     reshape_enabled=name_reshape_text,
-                    prefer_raqm=False,
+                    prefer_raqm=True,
                 )
         else:
             draw_centered_text_block(
@@ -939,7 +939,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 min_font_size=name_min_font_size,
                 max_lines=name_max_lines,
                 reshape_enabled=name_reshape_text,
-                prefer_raqm=False,
+                prefer_raqm=True,
             )
 
     if not bool(template_cfg.get("render_text", True)):
