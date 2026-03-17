@@ -9,18 +9,16 @@
   "font_bold_path": "templates/new/PAYKAN-BOLD.OTF",
   "name_font_bold_path": "templates/new/PAYKAN-BOLD.OTF",
   "name_reshape_text": true,
-  "name_render_engine": "gdi",
+  "name_render_engine": "",
   "name_arabic_font_bold_path": "templates/new/PAYKAN-BOLD.OTF",
   "name_arabic_reshape_text": true,
   "name_arabic_render_engine": "",
-
   "image_mode": "box",
   "image_box": [108, 502, 769, 1157],
   "image_mask_shape": "ellipse",
   "image_mask_box": [108, 502, 769, 1157],
   "image_mask_bleed": 4,
   "image_mask_feather": 2.2,
-
   "name_box": [90, 1466, 1562, 1715],
   "name_max_font_size": 154,
   "name_min_font_size": 62,
@@ -28,7 +26,6 @@
   "name_text_color": [255, 193, 7],
   "name_shadow_color": [0, 0, 0, 175],
   "name_shadow_offset": [3, 4],
-
   "text_box": [155, 1254, 1498, 1612],
   "template_cutouts": [
     {
@@ -36,11 +33,9 @@
       "box": [103, 497, 774, 1162]
     }
   ],
-
   "max_font_size": 114,
   "min_font_size": 56,
   "max_lines": 3,
-
   "top_bias": 0.10,
   "left_bias": 0.50,
   "image_zoom": 1.10,
@@ -49,7 +44,6 @@
   "portrait_left_bias": 0.50,
   "portrait_image_zoom": 1.02,
   "image_offset_y": 0,
-
   "text_align": "center",
   "short_text_align": "center",
   "text_padding_x": 40,
@@ -62,11 +56,9 @@
   "stretch_short_text": false,
   "stretch_long_text": false,
   "short_centered_layout": true,
-
   "text_color": [255, 255, 255],
   "shadow_color": [0, 0, 0, 170],
   "shadow_offset": [3, 4],
-
   "short_words_threshold": 4,
   "long_words_threshold": 9,
   "short_words_font_scale": 1.15,
