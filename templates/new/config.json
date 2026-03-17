@@ -1,5 +1,6 @@
 {
   "name": "عيد الفطر",
+  "enabled": false,
   "requires_name": true,
   "requires_text": false,
   "render_text": false,

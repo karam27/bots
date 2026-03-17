@@ -471,6 +471,10 @@ def load_templates() -> dict:
             print(f"[Templates] JSON error in {cfg_path}: {e}")
             continue
 
+        if not bool(cfg.get("enabled", True)):
+            print(f"[Templates] '{folder}' disabled via config.json")
+            continue
+
         if "template_path" not in cfg or "text_box" not in cfg:
             print(f"[Templates] Missing keys in {cfg_path} (need template_path, text_box)")
             continue
