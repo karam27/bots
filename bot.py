@@ -408,6 +408,14 @@ def resolve_path(p: str) -> str:
     return os.path.join(BASE_DIR, p)
 
 
+def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[str] = None) -> Optional[str]:
+    if primary_path and os.path.isfile(primary_path):
+        return primary_path
+    if fallback_path and os.path.isfile(fallback_path):
+        return fallback_path
+    return primary_path or fallback_path
+
+
 def load_templates() -> dict:
     templates = {}
     disabled_templates = {"mubasher"}
@@ -448,6 +456,8 @@ def load_templates() -> dict:
             cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
         if cfg.get("caption_font_bold_path"):
             cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
+        if cfg.get("name_arabic_font_bold_path"):
+            cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
 
         if not os.path.isfile(cfg["template_path"]):
             for candidate in ("template.png", "template.jpg", "template.jpeg", "template.webp"):
@@ -476,6 +486,10 @@ def load_templates() -> dict:
 
         if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
             print(f"[Templates] caption font not found for '{folder}': {cfg['caption_font_bold_path']}")
+            continue
+
+        if cfg.get("name_arabic_font_bold_path") and not os.path.isfile(cfg["name_arabic_font_bold_path"]):
+            print(f"[Templates] arabic name font not found for '{folder}': {cfg['name_arabic_font_bold_path']}")
             continue
 
         image_mode = cfg.get("image_mode", "full")
@@ -722,7 +736,7 @@ $bmp.Dispose()
 # ===================== Render =====================
 def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.Image:
     template_path = template_cfg["template_path"]
-    font_bold_path = template_cfg["font_bold_path"]
+    font_bold_path = ensure_existing_path(template_cfg["font_bold_path"])
 
     base = Image.open(template_path).convert("RGBA")
     base = apply_template_cutouts(base, template_cfg.get("template_cutouts", []))
@@ -822,10 +836,14 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
+<<<<<<< HEAD
             if os.name != "nt" and not PILLOW_HAS_RAQM:
                 fallback_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
                 if fallback_font_path and os.path.isfile(fallback_font_path):
                     name_font_path = fallback_font_path
+=======
+        name_font_path = ensure_existing_path(name_font_path, font_bold_path)
+>>>>>>> 7a72b842dc93268c12d5e5e55f8a8d23e93493b3
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
         name_shadow_color = tuple(template_cfg.get("name_shadow_color", template_cfg.get("shadow_color", [0, 0, 0, 140])))
         name_shadow_offset = tuple(template_cfg.get("name_shadow_offset", template_cfg.get("shadow_offset", [2, 3])))
