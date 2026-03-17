@@ -1,0 +1,29 @@
+{
+  "name": "قناة القسطل الاخبارية",
+  "template_path": "templates/classic/template.png",
+  "font_bold_path": "HEADLINERBOLD.otf",
+
+  "max_font_size": 120,
+  "min_font_size": 70,
+
+  "image_mode": "full",
+  "image_area_bottom": 1280,
+
+  "text_box": [70, 1320, 1570, 1900],
+
+  "template_cutouts": [],
+
+  "text_color": [255, 255, 255],
+  "shadow_color": [0, 0, 0, 140],
+  "shadow_offset": [2, 3],
+  "top_bias": 0.35,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 90,
+  "text_padding_y": 40,
+  "line_spacing_factor": 0.28,
+  "max_lines": 4,
+  "short_centered_layout": true,
+  "short_center_offset": -150,
+  "short_fill_ratio": 0.60
+}
