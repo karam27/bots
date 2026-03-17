@@ -1217,13 +1217,17 @@ async def choose_template_cb(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["template_id"] = template_id
     template_cfg = templates[template_id]
     name = template_cfg.get("name", template_id)
+    select_prompt = str(template_cfg.get("select_prompt", "")).strip()
 
     if bool(template_cfg.get("requires_name", False)):
-        await q.edit_message_text(f"تم اختيار القالب: {name}\nابعت الصورة أولاً، وبعدها سأطلب منك الاسم.")
+        prompt = select_prompt or "ابعت الصورة أولاً، وبعدها سأطلب منك الاسم."
+        await q.edit_message_text(f"تم اختيار القالب: {name}\n{prompt}")
     elif bool(template_cfg.get("requires_text", True)):
-        await q.edit_message_text(f"تم اختيار القالب: {name}\nالآن ابعث صورة الخبر.")
+        prompt = select_prompt or "الآن ابعث صورة الخبر."
+        await q.edit_message_text(f"تم اختيار القالب: {name}\n{prompt}")
     else:
-        await q.edit_message_text(f"تم اختيار القالب: {name}\nابعت الصورة فقط.")
+        prompt = select_prompt or "ابعت الصورة فقط."
+        await q.edit_message_text(f"تم اختيار القالب: {name}\n{prompt}")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1244,7 +1248,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if bool(template_cfg.get("requires_name", False)):
         context.user_data["news_img"] = img
-        await update.message.reply_text("ابعت الاسم الذي تريد إضافته فوق العبارة.")
+        after_photo_prompt = str(
+            template_cfg.get("after_photo_prompt", "ابعت الاسم الذي تريد إضافته فوق العبارة.")
+        ).strip()
+        await update.message.reply_text(after_photo_prompt)
         return
 
     if not bool(template_cfg.get("requires_text", True)):
