@@ -388,6 +388,37 @@ def split_short_text_balanced(draw, text: str, font, max_width: int, reshape_ena
     return best_lines
 
 
+def choose_text_lines(
+    draw,
+    text: str,
+    font,
+    max_width: int,
+    max_lines: int,
+    reshape_enabled: bool = True,
+) -> List[str]:
+    if max_lines <= 1:
+        return [text]
+
+    lines = split_short_text_balanced(
+        draw,
+        text,
+        font,
+        max_width,
+        reshape_enabled=reshape_enabled,
+    )
+    if len(lines) <= max_lines:
+        return lines
+
+    return break_lines_ar_balanced(
+        draw,
+        text,
+        font,
+        max_width,
+        max_lines=max_lines,
+        reshape_enabled=reshape_enabled,
+    )
+
+
 # ===================== Template cutouts =====================
 def apply_template_cutouts(base: Image.Image, cutouts: List) -> Image.Image:
     if not cutouts:
@@ -446,6 +477,14 @@ def find_linux_arabic_font() -> Optional[str]:
         if os.path.isfile(path):
             return path
     return None
+
+
+def debug_log_arabic_render(stage: str, **data):
+    try:
+        safe = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in data.items())
+        print(f"[ArabicDebug] {stage} {safe}")
+    except Exception:
+        pass
 
 
 def load_templates() -> dict:
@@ -615,16 +654,14 @@ def draw_centered_text_block(
 
     while font_size >= min_font_size:
         font = ImageFont.truetype(font_path, font_size)
-        lines = split_short_text_balanced(draw, text, font, box_w, reshape_enabled=reshape_enabled)
-        if len(lines) > max_lines:
-            lines = break_lines_ar_balanced(
-                draw,
-                text,
-                font,
-                box_w,
-                max_lines=max_lines,
-                reshape_enabled=reshape_enabled,
-            )
+        lines = choose_text_lines(
+            draw,
+            text,
+            font,
+            box_w,
+            max_lines=max_lines,
+            reshape_enabled=reshape_enabled,
+        )
 
         widths = []
         heights = []
@@ -650,6 +687,7 @@ def draw_centered_text_block(
 
         font_size -= 2
 
+    font_size = max(min_font_size, font_size)
     font = ImageFont.truetype(font_path, font_size)
     if not final_heights:
         final_heights = [
@@ -911,6 +949,19 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                         print(f"[Arabic] Linux fallback font not found, using template font: {fallback_font_path}")
                         name_font_path = fallback_font_path
         name_font_path = ensure_existing_path(name_font_path, font_bold_path)
+        if _count_arabic_chars(text) > 0:
+            debug_log_arabic_render(
+                "name_render",
+                template_id=template_cfg.get("id"),
+                platform=os.name,
+                raqm=PILLOW_HAS_RAQM,
+                text=text,
+                font_path=name_font_path,
+                font_exists=bool(name_font_path and os.path.isfile(name_font_path)),
+                render_engine=name_render_engine,
+                reshape=name_reshape_text,
+                max_lines=int(template_cfg.get("name_max_lines", 2)),
+            )
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
         name_shadow_color = tuple(template_cfg.get("name_shadow_color", template_cfg.get("shadow_color", [0, 0, 0, 140])))
         name_shadow_offset = tuple(template_cfg.get("name_shadow_offset", template_cfg.get("shadow_offset", [2, 3])))
@@ -1020,7 +1071,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         font = ImageFont.truetype(font_bold_path, font_size)
 
         if short_style_mode:
-            lines = split_short_text_balanced(draw, text, font, box_w)
+            lines = choose_text_lines(draw, text, font, box_w, max_lines=max_lines)
         else:
             lines = break_lines_ar_balanced(draw, text, font, box_w, max_lines=max_lines)
 
@@ -1049,7 +1100,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         font_size = min_font_size
         font = ImageFont.truetype(font_bold_path, font_size)
         if short_style_mode:
-            final_lines = split_short_text_balanced(draw, text, font, box_w)
+            final_lines = choose_text_lines(draw, text, font, box_w, max_lines=max_lines)
         else:
             final_lines = break_lines_ar_balanced(draw, text, font, box_w, max_lines=max_lines)
 
@@ -1248,6 +1299,8 @@ def main():
 
     print("BASE_DIR:", BASE_DIR)
     print("TEMPLATES_DIR:", TEMPLATES_DIR)
+    print("OS:", os.name)
+    print("PILLOW_HAS_RAQM:", PILLOW_HAS_RAQM)
     print("Bot is running...")
     app.run_polling(close_loop=False)
 
