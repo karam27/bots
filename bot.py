@@ -490,6 +490,8 @@ def load_templates() -> dict:
             cfg["name_font_bold_path"] = resolve_path(cfg["name_font_bold_path"])
         if cfg.get("name_arabic_font_bold_path"):
             cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
+        if cfg.get("name_no_raqm_font_bold_path"):
+            cfg["name_no_raqm_font_bold_path"] = resolve_path(cfg["name_no_raqm_font_bold_path"])
         if cfg.get("caption_font_bold_path"):
             cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
 
@@ -517,6 +519,15 @@ def load_templates() -> dict:
                 f"{cfg['name_arabic_font_bold_path']} - falling back to name_font_bold_path"
             )
             cfg["name_arabic_font_bold_path"] = cfg.get("name_font_bold_path", cfg["font_bold_path"])
+        if cfg.get("name_no_raqm_font_bold_path") and not os.path.isfile(cfg["name_no_raqm_font_bold_path"]):
+            print(
+                f"[Templates] no-raqm name font not found for '{folder}': "
+                f"{cfg['name_no_raqm_font_bold_path']} - falling back to arabic name font"
+            )
+            cfg["name_no_raqm_font_bold_path"] = cfg.get(
+                "name_arabic_font_bold_path",
+                cfg.get("name_font_bold_path", cfg["font_bold_path"]),
+            )
 
         if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
             print(f"[Templates] caption font not found for '{folder}': {cfg['caption_font_bold_path']}")
@@ -886,7 +897,10 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
-            if os.name != "nt" and not PILLOW_HAS_RAQM:
+            if not PILLOW_HAS_RAQM and template_cfg.get("name_no_raqm_font_bold_path"):
+                name_font_path = template_cfg.get("name_no_raqm_font_bold_path", name_font_path)
+            configured_name_font_exists = bool(name_font_path and os.path.isfile(name_font_path))
+            if os.name != "nt" and not PILLOW_HAS_RAQM and not configured_name_font_exists:
                 linux_arabic_font = find_linux_arabic_font()
                 if linux_arabic_font:
                     print(f"[Arabic] Using Linux fallback font for name: {linux_arabic_font}")

@@ -12,6 +12,7 @@
   "name_reshape_text": true,
   "name_render_engine": "",
   "name_arabic_font_bold_path": "templates/new/PAYKAN-BOLD.OTF",
+  "name_no_raqm_font_bold_path": "templates/new/HT Moshreq Pro Bold.ttf",
   "name_arabic_reshape_text": true,
   "name_arabic_render_engine": "",
   "image_mode": "box",
