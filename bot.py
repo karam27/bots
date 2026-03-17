@@ -37,8 +37,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # ===================== Text Cleaning =====================
 def _count_arabic_chars(text: str) -> int:
     return len(re.findall(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", text))
-
-
 def fix_arabic_mojibake(text: str) -> str:
     suspect_chars = "ØÙÛÚÃÂ"
     suspect_count = sum(text.count(ch) for ch in suspect_chars)
@@ -931,10 +929,12 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         name_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
         name_render_engine = str(template_cfg.get("name_render_engine", "")).lower()
         name_reshape_text = bool(template_cfg.get("name_reshape_text", True))
+        name_prefer_raqm = bool(template_cfg.get("name_prefer_raqm", True))
         if _count_arabic_chars(text) > 0 and template_cfg.get("name_arabic_font_bold_path"):
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
+            name_prefer_raqm = bool(template_cfg.get("name_arabic_prefer_raqm", name_prefer_raqm))
             if not PILLOW_HAS_RAQM and template_cfg.get("name_no_raqm_font_bold_path"):
                 name_font_path = template_cfg.get("name_no_raqm_font_bold_path", name_font_path)
             configured_name_font_exists = bool(name_font_path and os.path.isfile(name_font_path))
@@ -960,6 +960,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 font_exists=bool(name_font_path and os.path.isfile(name_font_path)),
                 render_engine=name_render_engine,
                 reshape=name_reshape_text,
+                prefer_raqm=name_prefer_raqm,
                 max_lines=int(template_cfg.get("name_max_lines", 2)),
             )
         name_text_color = tuple(template_cfg.get("name_text_color", template_cfg.get("text_color", [255, 255, 255])))
@@ -996,7 +997,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                     min_font_size=name_min_font_size,
                     max_lines=name_max_lines,
                     reshape_enabled=name_reshape_text,
-                    prefer_raqm=True,
+                    prefer_raqm=name_prefer_raqm,
                 )
         else:
             draw_centered_text_block(
@@ -1011,7 +1012,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 min_font_size=name_min_font_size,
                 max_lines=name_max_lines,
                 reshape_enabled=name_reshape_text,
-                prefer_raqm=True,
+                prefer_raqm=name_prefer_raqm,
             )
 
     if not bool(template_cfg.get("render_text", True)):
