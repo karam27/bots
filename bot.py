@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from io import BytesIO
-from typing import Optional, List
+from typing import Optional, List, Set
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
 
@@ -25,13 +25,242 @@ from telegram.ext import (
 # ===================== Paths =====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 font_path = os.path.join(BASE_DIR, "Tajawal-Bold.ttf")
-
-font = ImageFont.truetype(font_path, 70)
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+ADMIN_STATE_PATH = os.path.join(DATA_DIR, "admin_state.json")
 PILLOW_HAS_RAQM = bool(features.check("raqm"))
+ADMIN_PASSWORD = "1234"
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+
+# ===================== Admin / Employee State =====================
+def ensure_data_dir():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def default_admin_state() -> dict:
+    return {
+        "admin_password": ADMIN_PASSWORD,
+        "max_employees": 0,
+        "employee_ids": [],
+        "enabled_templates": [],
+    }
+
+
+def load_admin_state() -> dict:
+    ensure_data_dir()
+    if not os.path.isfile(ADMIN_STATE_PATH):
+        state = default_admin_state()
+        save_admin_state(state)
+        return state
+
+    try:
+        with open(ADMIN_STATE_PATH, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        state = default_admin_state()
+
+    base = default_admin_state()
+    base.update(state if isinstance(state, dict) else {})
+    if not isinstance(base.get("employee_ids"), list):
+        base["employee_ids"] = []
+    if not isinstance(base.get("enabled_templates"), list):
+        base["enabled_templates"] = []
+    base["max_employees"] = max(0, int(base.get("max_employees", 0) or 0))
+    return base
+
+
+def save_admin_state(state: dict):
+    ensure_data_dir()
+    with open(ADMIN_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def main_role_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("مدير", callback_data="role:admin")],
+            [InlineKeyboardButton("موظف", callback_data="role:employee")],
+        ]
+    )
+
+
+def admin_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("إضافة قالب جديد", callback_data="admin:add_template")],
+            [InlineKeyboardButton("إدارة القوالب", callback_data="admin:templates")],
+            [InlineKeyboardButton("تحديد عدد الموظفين", callback_data="admin:max_employees")],
+            [InlineKeyboardButton("عرض الإعدادات", callback_data="admin:status")],
+            [InlineKeyboardButton("رجوع للبداية", callback_data="nav:start")],
+        ]
+    )
+
+
+def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKeyboardMarkup:
+    rows = []
+    for tid, cfg in templates.items():
+        prefix = "✅" if tid in enabled_ids else "⬜"
+        rows.append(
+            [InlineKeyboardButton(f"{prefix} {cfg.get('name', tid)}", callback_data=f"admin_tpl:{tid}")]
+        )
+    rows.append([InlineKeyboardButton("رجوع", callback_data="admin:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def get_enabled_templates(templates: dict, state: dict, role: Optional[str]) -> dict:
+    if role == "admin":
+        return templates
+
+    enabled_ids = set(state.get("enabled_templates", []))
+    if not enabled_ids:
+        return {}
+    return {tid: cfg for tid, cfg in templates.items() if tid in enabled_ids}
+
+
+def employee_count_text(state: dict) -> str:
+    current = len(state.get("employee_ids", []))
+    limit = int(state.get("max_employees", 0) or 0)
+    if limit <= 0:
+        return f"{current} / غير محدد"
+    return f"{current} / {limit}"
+
+
+def admin_status_text(state: dict, templates: dict) -> str:
+    enabled_ids = set(state.get("enabled_templates", []))
+    enabled_names = [
+        str(cfg.get("name", tid))
+        for tid, cfg in templates.items()
+        if tid in enabled_ids
+    ]
+    enabled_line = "، ".join(enabled_names) if enabled_names else "لا يوجد"
+    return (
+        "لوحة المدير\n"
+        f"عدد الموظفين: {employee_count_text(state)}\n"
+        f"القوالب المفعلة للموظفين: {enabled_line}"
+    )
+
+
+async def show_start_menu(target_message, context: ContextTypes.DEFAULT_TYPE, text: Optional[str] = None):
+    templates = get_templates(context)
+    if not templates:
+        prompt = text or "أهلاً بك.\nلا يوجد قوالب حالياً، لكن يمكنك الدخول كمدير لإضافة قالب جديد."
+        await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
+        return
+
+    prompt = text or "أهلاً بك.\nاختر طريقة الدخول:"
+    await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
+
+
+async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE):
+    templates = get_templates(context)
+    state = load_admin_state()
+    role = context.user_data.get("role")
+    available_templates = get_enabled_templates(templates, state, role)
+
+    if not available_templates:
+        if role == "employee":
+            await target_message.reply_text("لا يوجد قوالب مفعلة للموظفين حالياً.")
+        else:
+            await target_message.reply_text("ما في قوالب محمّلة حالياً.")
+        return
+
+    await target_message.reply_text(
+        "اختر قالب:",
+        reply_markup=templates_keyboard(available_templates),
+    )
+
+
+def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    keep_keys = {
+        "role",
+        "awaiting_admin_password",
+        "awaiting_max_employees",
+        "awaiting_new_template_name",
+        "awaiting_new_template_image",
+        "pending_template_name",
+    }
+    return {k: v for k, v in context.user_data.items() if k in keep_keys}
+
+
+def reset_design_state(context: ContextTypes.DEFAULT_TYPE):
+    session = preserve_session(context)
+    context.user_data.clear()
+    context.user_data.update(session)
+
+
+def make_template_folder_name(template_name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", template_name).strip("_").lower()
+    if not slug:
+        slug = f"template_{next(tempfile._get_candidate_names())}"
+    folder = slug
+    while os.path.exists(os.path.join(TEMPLATES_DIR, folder)):
+        folder = f"{slug}_{next(tempfile._get_candidate_names())}"
+    return folder
+
+
+def build_default_template_config(template_name: str, folder_name: str, width: int, height: int) -> dict:
+    text_left = max(40, int(width * 0.06))
+    text_right = min(width - 40, int(width * 0.94))
+    text_top = max(0, int(height * 0.68))
+    text_bottom = min(height - 20, int(height * 0.94))
+    min_font_size = max(34, int(height * 0.03))
+    max_font_size = max(min_font_size + 10, int(height * 0.06))
+
+    return {
+        "name": template_name,
+        "enabled": True,
+        "requires_name": False,
+        "requires_text": True,
+        "render_text": True,
+        "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
+        "template_path": f"templates/{folder_name}/template.png",
+        "font_bold_path": "C:/Windows/Fonts/tahomabd.ttf",
+        "image_mode": "full",
+        "image_area_bottom": int(height * 0.64),
+        "text_box": [text_left, text_top, text_right, text_bottom],
+        "template_cutouts": [],
+        "max_font_size": max_font_size,
+        "min_font_size": min_font_size,
+        "text_color": [255, 255, 255],
+        "shadow_color": [0, 0, 0, 160],
+        "shadow_offset": [2, 3],
+        "top_bias": 0.30,
+        "text_align": "center",
+        "short_text_align": "center",
+        "text_padding_x": max(30, int(width * 0.05)),
+        "text_padding_y": max(20, int(height * 0.02)),
+        "line_spacing_factor": 0.22,
+        "max_lines": 4,
+        "short_centered_layout": True,
+        "short_center_offset": 0,
+        "short_fill_ratio": 0.65,
+    }
+
+
+def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
+    ensure_data_dir()
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+
+    with Image.open(BytesIO(source_bytes)) as img:
+        template_image = img.convert("RGBA")
+        width, height = template_image.size
+
+    folder_name = make_template_folder_name(template_name)
+    folder_path = os.path.join(TEMPLATES_DIR, folder_name)
+    os.makedirs(folder_path, exist_ok=True)
+
+    template_path = os.path.join(folder_path, "template.png")
+    template_image.save(template_path, format="PNG")
+
+    config = build_default_template_config(template_name, folder_name, width, height)
+    config_path = os.path.join(folder_path, "config.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+    return folder_name
 
 
 # ===================== Text Cleaning =====================
@@ -626,7 +855,7 @@ async def send_rendered_post(
         connect_timeout=30,
         pool_timeout=30,
     )
-    context.user_data.clear()
+    reset_design_state(context)
 
 
 def draw_centered_text_block(
@@ -1302,6 +1531,391 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
 
 
+async def start_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await show_start_menu(update.message, context)
+
+
+async def templates_cmd_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("role") not in {"admin", "employee"}:
+        await show_start_menu(update.message, context, "لازم تختار مدير أو موظف أولاً.")
+        return
+    await send_templates_menu(update.message, context)
+
+
+async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    role = q.data.split(":", 1)[1]
+    context.user_data.clear()
+
+    if role == "admin":
+        context.user_data["awaiting_admin_password"] = True
+        await q.edit_message_text("اكتب كلمة سر المدير.")
+        return
+
+    state = load_admin_state()
+    user_id = q.from_user.id
+    employee_ids = set(state.get("employee_ids", []))
+    max_employees = int(state.get("max_employees", 0) or 0)
+
+    if user_id not in employee_ids:
+        if max_employees > 0 and len(employee_ids) >= max_employees:
+            await q.edit_message_text("وصلت لعدد الموظفين المسموح. راجع المدير لزيادة العدد.")
+            return
+        employee_ids.add(user_id)
+        state["employee_ids"] = sorted(employee_ids)
+        save_admin_state(state)
+
+    context.user_data["role"] = "employee"
+    await q.edit_message_text("تم تسجيلك كموظف.")
+    await send_templates_menu(q.message, context)
+
+
+async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if context.user_data.get("role") != "admin":
+        await q.edit_message_text("هذه القائمة للمدير فقط. ابدأ من /start")
+        return
+
+    templates = get_templates(context)
+    state = load_admin_state()
+    action = q.data.split(":", 1)[1]
+
+    if action == "menu":
+        await q.edit_message_text(admin_status_text(state, templates), reply_markup=admin_menu_keyboard())
+        return
+
+    if action == "templates":
+        enabled_ids = set(state.get("enabled_templates", []))
+        await q.edit_message_text(
+            "فعّل أو عطّل القوالب التي تظهر للموظفين:",
+            reply_markup=template_toggle_keyboard(templates, enabled_ids),
+        )
+        return
+
+    if action == "add_template":
+        context.user_data["awaiting_new_template_name"] = True
+        context.user_data.pop("awaiting_new_template_image", None)
+        context.user_data.pop("pending_template_name", None)
+        await q.edit_message_text("أرسل اسم القالب الجديد.")
+        return
+
+    if action == "max_employees":
+        context.user_data["awaiting_max_employees"] = True
+        await q.edit_message_text("أرسل الآن عدد الموظفين المسموح به كرقم فقط.")
+        return
+
+    if action == "status":
+        await q.edit_message_text(admin_status_text(state, templates), reply_markup=admin_menu_keyboard())
+        return
+
+
+async def nav_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    context.user_data.clear()
+    await q.edit_message_text("تمت العودة للبداية.")
+    await show_start_menu(q.message, context)
+
+
+async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if context.user_data.get("role") != "admin":
+        await q.edit_message_text("هذه القائمة للمدير فقط. ابدأ من /start")
+        return
+
+    templates = get_templates(context)
+    template_id = q.data.split(":", 1)[1]
+    if template_id not in templates:
+        await q.answer("القالب غير موجود", show_alert=True)
+        return
+
+    state = load_admin_state()
+    enabled_ids = set(state.get("enabled_templates", []))
+    if template_id in enabled_ids:
+        enabled_ids.remove(template_id)
+    else:
+        enabled_ids.add(template_id)
+
+    state["enabled_templates"] = sorted(enabled_ids)
+    save_admin_state(state)
+    await q.edit_message_text(
+        "فعّل أو عطّل القوالب التي تظهر للموظفين:",
+        reply_markup=template_toggle_keyboard(templates, enabled_ids),
+    )
+
+
+async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    templates = get_templates(context)
+    state = load_admin_state()
+    available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+    template_id = q.data.split(":", 1)[1]
+
+    if template_id not in available_templates:
+        await q.edit_message_text("القالب غير موجود أو غير متاح لهذا الحساب. جرّب /start.")
+        return
+
+    context.user_data["template_id"] = template_id
+    template_cfg = available_templates[template_id]
+    name = template_cfg.get("name", template_id)
+    select_prompt = str(template_cfg.get("select_prompt", "")).strip()
+
+    if bool(template_cfg.get("requires_name", False)):
+        prompt = select_prompt or "ابعت الصورة أولاً، وبعدها سأطلب منك الاسم أو النص المطلوب."
+    elif bool(template_cfg.get("requires_text", True)):
+        prompt = select_prompt or "الآن ابعث الصورة."
+    else:
+        prompt = select_prompt or "ابعت الصورة فقط."
+    await q.edit_message_text(f"تم اختيار القالب: {name}\n{prompt}")
+
+
+async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_new_template_image"):
+        if context.user_data.get("role") != "admin":
+            reset_design_state(context)
+            await show_start_menu(update.message, context)
+            return
+
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        bio = BytesIO()
+        await file.download_to_memory(out=bio)
+        folder_name = create_template_from_image(
+            context.user_data.get("pending_template_name", "قالب جديد"),
+            bio.getvalue(),
+        )
+        reset_design_state(context)
+        context.user_data["role"] = "admin"
+        templates = get_templates(context)
+        state = load_admin_state()
+        await update.message.reply_text(
+            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}",
+            reply_markup=admin_menu_keyboard(),
+        )
+        await update.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
+    if context.user_data.get("role") not in {"admin", "employee"}:
+        await show_start_menu(update.message, context, "اختر أولاً الدخول كمدير أو موظف.")
+        return
+
+    if "template_id" not in context.user_data:
+        await update.message.reply_text("اختر قالب أولاً من /start أو /templates.")
+        return
+
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+
+    bio = BytesIO()
+    await file.download_to_memory(out=bio)
+    bio.seek(0)
+
+    img = Image.open(bio)
+    templates = get_templates(context)
+    state = load_admin_state()
+    available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+    template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
+
+    if bool(template_cfg.get("requires_name", False)):
+        context.user_data["news_img"] = img
+        after_photo_prompt = str(
+            template_cfg.get("after_photo_prompt", "ابعت الآن النص أو الاسم المطلوب إضافته على التصميم.")
+        ).strip()
+        await update.message.reply_text(after_photo_prompt)
+        return
+
+    if not bool(template_cfg.get("requires_text", True)):
+        try:
+            await send_rendered_post(update, context, template_cfg, img)
+        except Exception as e:
+            await update.message.reply_text(f"صار خطأ أثناء التصميم: {e}")
+            reset_design_state(context)
+        return
+
+    context.user_data["news_img"] = img
+    await update.message.reply_text("تمام. الآن ابعث النص.")
+
+
+async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = update.message.document
+    if not document:
+        return
+
+    if context.user_data.get("awaiting_new_template_image"):
+        if context.user_data.get("role") != "admin":
+            reset_design_state(context)
+            await show_start_menu(update.message, context)
+            return
+
+        file = await context.bot.get_file(document.file_id)
+        bio = BytesIO()
+        await file.download_to_memory(out=bio)
+        folder_name = create_template_from_image(
+            context.user_data.get("pending_template_name", "قالب جديد"),
+            bio.getvalue(),
+        )
+        reset_design_state(context)
+        context.user_data["role"] = "admin"
+        templates = get_templates(context)
+        state = load_admin_state()
+        await update.message.reply_text(
+            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}"
+        )
+        await update.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
+    if context.user_data.get("role") not in {"admin", "employee"}:
+        await show_start_menu(update.message, context, "اختر أولاً الدخول كمدير أو موظف.")
+        return
+
+    if "template_id" not in context.user_data:
+        await update.message.reply_text("اختر قالب أولاً من /start أو /templates.")
+        return
+
+    file = await context.bot.get_file(document.file_id)
+    bio = BytesIO()
+    await file.download_to_memory(out=bio)
+    bio.seek(0)
+
+    img = Image.open(bio)
+    templates = get_templates(context)
+    state = load_admin_state()
+    available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+    template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
+
+    if bool(template_cfg.get("requires_name", False)):
+        context.user_data["news_img"] = img
+        after_photo_prompt = str(
+            template_cfg.get("after_photo_prompt", "ابعت الآن النص أو الاسم المطلوب إضافته على التصميم.")
+        ).strip()
+        await update.message.reply_text(after_photo_prompt)
+        return
+
+    if not bool(template_cfg.get("requires_text", True)):
+        try:
+            await send_rendered_post(update, context, template_cfg, img)
+        except Exception as e:
+            await update.message.reply_text(f"صار خطأ أثناء التصميم: {e}")
+            reset_design_state(context)
+        return
+
+    context.user_data["news_img"] = img
+    await update.message.reply_text("تمام. الآن ابعث النص.")
+
+
+async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_new_template_name"):
+        if context.user_data.get("role") != "admin":
+            reset_design_state(context)
+            await show_start_menu(update.message, context)
+            return
+
+        template_name = clean_text_safe(update.message.text) or update.message.text.strip()
+        if not template_name:
+            await update.message.reply_text("أرسل اسم واضح للقالب.")
+            return
+
+        context.user_data["pending_template_name"] = template_name
+        context.user_data.pop("awaiting_new_template_name", None)
+        context.user_data["awaiting_new_template_image"] = True
+        await update.message.reply_text(
+            "أرسل الآن صورة القالب الجديدة. الأفضل إرسالها كملف للحفاظ على الجودة والشفافية."
+        )
+        return
+
+    if context.user_data.get("awaiting_admin_password"):
+        state = load_admin_state()
+        password = update.message.text.strip()
+        if password != str(state.get("admin_password", ADMIN_PASSWORD)):
+            reset_design_state(context)
+            await update.message.reply_text("كلمة المرور غير صحيحة.")
+            await show_start_menu(update.message, context)
+            return
+
+        reset_design_state(context)
+        context.user_data["role"] = "admin"
+        templates = get_templates(context)
+        await update.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
+    if context.user_data.get("awaiting_max_employees"):
+        if context.user_data.get("role") != "admin":
+            reset_design_state(context)
+            await show_start_menu(update.message, context)
+            return
+
+        value = update.message.text.strip()
+        if not value.isdigit():
+            await update.message.reply_text("أرسل رقم صحيح فقط.")
+            return
+
+        state = load_admin_state()
+        state["max_employees"] = int(value)
+        if state["max_employees"] > 0:
+            state["employee_ids"] = state.get("employee_ids", [])[: state["max_employees"]]
+        save_admin_state(state)
+        context.user_data.pop("awaiting_max_employees", None)
+        templates = get_templates(context)
+        await update.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
+    if "news_img" not in context.user_data:
+        await update.message.reply_text("ابعت الصورة أولاً.")
+        return
+
+    if "template_id" not in context.user_data:
+        await update.message.reply_text("اختر قالب أولاً من /start أو /templates.")
+        return
+
+    templates = get_templates(context)
+    state = load_admin_state()
+    available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+    template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
+
+    if bool(template_cfg.get("requires_name", False)):
+        text = clean_text_safe(update.message.text)
+        img = context.user_data["news_img"]
+        try:
+            await send_rendered_post(update, context, template_cfg, img, text)
+        except Exception as e:
+            await update.message.reply_text(f"صار خطأ أثناء التصميم: {e}")
+            reset_design_state(context)
+        return
+
+    if not bool(template_cfg.get("requires_text", True)):
+        await update.message.reply_text("هذا القالب لا يحتاج نصاً. ابعت صورة فقط.")
+        return
+
+    text = clean_text_safe(update.message.text)
+    img = context.user_data["news_img"]
+
+    try:
+        await send_rendered_post(update, context, template_cfg, img, text)
+    except Exception as e:
+        await update.message.reply_text(f"صار خطأ أثناء التصميم: {e}")
+        reset_design_state(context)
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not set in .env")
@@ -1316,11 +1930,16 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("templates", templates_cmd))
-    app.add_handler(CallbackQueryHandler(choose_template_cb, pattern=r"^tpl:"))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("start", start_v2))
+    app.add_handler(CommandHandler("templates", templates_cmd_v2))
+    app.add_handler(CallbackQueryHandler(role_cb_v2, pattern=r"^role:"))
+    app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
+    app.add_handler(CallbackQueryHandler(nav_cb_v2, pattern=r"^nav:"))
+    app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
+    app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
+    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_image_document_v2))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_v2))
 
     print("BASE_DIR:", BASE_DIR)
     print("TEMPLATES_DIR:", TEMPLATES_DIR)

@@ -1,0 +1,11 @@
+{
+  "admin_password": "1234",
+  "max_employees": 11,
+  "employee_ids": [
+    1107450520
+  ],
+  "enabled_templates": [
+    "classic",
+    "new"
+  ]
+}
