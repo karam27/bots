@@ -103,8 +103,9 @@ def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKe
     rows = []
     for tid, cfg in templates.items():
         prefix = "✅" if tid in enabled_ids else "⬜"
+        display_name = cfg.get("name", tid)
         rows.append(
-            [InlineKeyboardButton(f"{prefix} {cfg.get('name', tid)}", callback_data=f"admin_tpl:{tid}")]
+            [InlineKeyboardButton(f"{prefix} {display_name} [{tid}]", callback_data=f"admin_tpl:{tid}")]
         )
     rows.append([InlineKeyboardButton("رجوع", callback_data="admin:menu")])
     return InlineKeyboardMarkup(rows)
@@ -823,7 +824,7 @@ def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
     buttons = []
     for tid, cfg in templates.items():
         name = cfg.get("name", tid)
-        buttons.append([InlineKeyboardButton(f"📌 {name}", callback_data=f"tpl:{tid}")])
+        buttons.append([InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{tid}")])
     return InlineKeyboardMarkup(buttons)
 
 
