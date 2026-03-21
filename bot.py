@@ -78,6 +78,15 @@ def save_admin_state(state: dict):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
+def enable_template_for_employees(template_id: str) -> dict:
+    state = load_admin_state()
+    enabled_ids = set(state.get("enabled_templates", []))
+    enabled_ids.add(template_id)
+    state["enabled_templates"] = sorted(enabled_ids)
+    save_admin_state(state)
+    return state
+
+
 def main_role_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
@@ -193,12 +202,14 @@ def reset_design_state(context: ContextTypes.DEFAULT_TYPE):
 
 
 def make_template_folder_name(template_name: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", template_name).strip("_").lower()
-    if not slug:
-        slug = f"template_{next(tempfile._get_candidate_names())}"
-    folder = slug
+    folder = re.sub(r'[<>:"/\\|?*\x00-\x1F]+', " ", str(template_name or ""))
+    folder = re.sub(r"\s+", " ", folder).strip().strip(".")
+    folder = folder.replace(" ", "_")
+    if not folder:
+        folder = f"template_{next(tempfile._get_candidate_names())}"
+    base_folder = folder
     while os.path.exists(os.path.join(TEMPLATES_DIR, folder)):
-        folder = f"{slug}_{next(tempfile._get_candidate_names())}"
+        folder = f"{base_folder}_{next(tempfile._get_candidate_names())}"
     return folder
 
 
@@ -241,6 +252,14 @@ def build_default_template_config(template_name: str, folder_name: str, width: i
     }
 
 
+def build_default_text_box(width: int, height: int) -> List[int]:
+    text_left = max(40, int(width * 0.06))
+    text_right = min(width - 40, int(width * 0.94))
+    text_top = max(0, int(height * 0.68))
+    text_bottom = min(height - 20, int(height * 0.94))
+    return [text_left, text_top, text_right, text_bottom]
+
+
 def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
     ensure_data_dir()
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -262,6 +281,29 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
     return folder_name
+
+
+def create_default_template_config_file(folder_name: str, folder_path: str, image_path: str) -> Optional[dict]:
+    try:
+        with Image.open(image_path) as img:
+            width, height = img.size
+    except Exception as e:
+        print(f"[Templates] unable to read image for '{folder_name}': {e}")
+        return None
+
+    config = build_default_template_config(folder_name, folder_name, width, height)
+    config["name"] = folder_name.replace("_", " ").strip() or folder_name
+    config["template_path"] = os.path.relpath(image_path, BASE_DIR).replace("\\", "/")
+    config_path = os.path.join(folder_path, "config.json")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Templates] unable to create default config for '{folder_name}': {e}")
+        return None
+
+    print(f"[Templates] created default config for '{folder_name}'")
+    return config
 
 
 # ===================== Text Cleaning =====================
@@ -684,6 +726,27 @@ def resolve_path(p: str) -> str:
     return os.path.join(BASE_DIR, p)
 
 
+def find_template_image(path: str, cfg: dict) -> Optional[str]:
+    configured_path = resolve_path(cfg.get("template_path", ""))
+    if configured_path and os.path.isfile(configured_path):
+        return configured_path
+
+    for candidate in ("template.png", "template.jpg", "template.jpeg", "template.webp"):
+        candidate_path = os.path.join(path, candidate)
+        if os.path.isfile(candidate_path):
+            return candidate_path
+
+    for file_name in sorted(os.listdir(path)):
+        candidate_path = os.path.join(path, file_name)
+        if not os.path.isfile(candidate_path):
+            continue
+        ext = os.path.splitext(file_name)[1].lower()
+        if ext in {".png", ".jpg", ".jpeg", ".webp"}:
+            return candidate_path
+
+    return configured_path or None
+
+
 def ensure_existing_path(primary_path: Optional[str], fallback_path: Optional[str] = None) -> Optional[str]:
     if primary_path and os.path.isfile(primary_path):
         return primary_path
@@ -736,25 +799,32 @@ def load_templates() -> dict:
 
         cfg_path = os.path.join(path, "config.json")
         if not os.path.isfile(cfg_path):
-            continue
+            fallback_image_path = find_template_image(path, {})
+            if not fallback_image_path or not os.path.isfile(fallback_image_path):
+                print(f"[Templates] skipping '{folder}': missing config.json and template image")
+                continue
 
-        try:
-            with open(cfg_path, "r", encoding="utf-8-sig") as f:
-                cfg = json.load(f)
-        except Exception as e:
-            print(f"[Templates] JSON error in {cfg_path}: {e}")
-            continue
+            cfg = create_default_template_config_file(folder, path, fallback_image_path)
+            if not cfg:
+                continue
+        else:
+            try:
+                with open(cfg_path, "r", encoding="utf-8-sig") as f:
+                    cfg = json.load(f)
+            except Exception as e:
+                print(f"[Templates] JSON error in {cfg_path}: {e}")
+                continue
 
         if not bool(cfg.get("enabled", True)):
             print(f"[Templates] '{folder}' disabled via config.json")
             continue
 
-        if "template_path" not in cfg or "text_box" not in cfg:
-            print(f"[Templates] Missing keys in {cfg_path} (need template_path, text_box)")
+        if not isinstance(cfg, dict):
+            print(f"[Templates] Invalid config format in {cfg_path}")
             continue
 
         cfg["id"] = folder
-        cfg["template_path"] = resolve_path(cfg["template_path"])
+        cfg["template_path"] = find_template_image(path, cfg)
         cfg["font_bold_path"] = resolve_path(cfg.get("font_bold_path", "HEADLINERBOLD.otf"))
 
         if cfg.get("name_font_bold_path"):
@@ -767,15 +837,21 @@ def load_templates() -> dict:
             cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
 
         if not os.path.isfile(cfg["template_path"]):
-            for candidate in ("template.png", "template.jpg", "template.jpeg", "template.webp"):
-                candidate_path = os.path.join(path, candidate)
-                if os.path.isfile(candidate_path):
-                    cfg["template_path"] = candidate_path
-                    break
-
-        if not os.path.isfile(cfg["template_path"]):
             print(f"[Templates] template not found for '{folder}': {cfg['template_path']}")
             continue
+
+        if "text_box" not in cfg:
+            if bool(cfg.get("render_text", True)):
+                try:
+                    with Image.open(cfg["template_path"]) as template_img:
+                        width, height = template_img.size
+                    cfg["text_box"] = build_default_text_box(width, height)
+                    print(f"[Templates] generated default text_box for '{folder}'")
+                except Exception as e:
+                    print(f"[Templates] unable to infer text_box for '{folder}': {e}")
+                    continue
+            else:
+                cfg["text_box"] = [0, 0, 1, 1]
 
         if not os.path.isfile(cfg["font_bold_path"]):
             print(f"[Templates] font not found for '{folder}': {cfg['font_bold_path']}")
@@ -1696,7 +1772,7 @@ async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reset_design_state(context)
         context.user_data["role"] = "admin"
         templates = get_templates(context)
-        state = load_admin_state()
+        state = enable_template_for_employees(folder_name)
         await update.message.reply_text(
             f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}",
             reply_markup=admin_menu_keyboard(),
@@ -1769,7 +1845,7 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
         reset_design_state(context)
         context.user_data["role"] = "admin"
         templates = get_templates(context)
-        state = load_admin_state()
+        state = enable_template_for_employees(folder_name)
         await update.message.reply_text(
             f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}"
         )
