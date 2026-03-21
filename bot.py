@@ -1843,7 +1843,11 @@ async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TY
     template_id = find_template_id_by_callback_token(available_templates, callback_token)
 
     if template_id not in available_templates:
-        await q.edit_message_text("القالب غير موجود أو غير متاح لهذا الحساب. جرّب /start.")
+        template_id = find_template_id_by_callback_token(templates, callback_token)
+        if template_id in templates and template_id not in available_templates:
+            await q.edit_message_text("هذا القالب غير مفعّل لهذا الحساب حالياً.")
+            return
+        await q.edit_message_text("تم تحديث القائمة. اختر القالب من جديد.", reply_markup=templates_keyboard(available_templates))
         return
 
     context.user_data["template_id"] = template_id
