@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 import hashlib
+import shutil
 from io import BytesIO
 from typing import Optional, List, Set
 
@@ -217,6 +218,16 @@ def reset_design_state(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.update(session)
 
 
+def is_image_document(document) -> bool:
+    if not document:
+        return False
+    mime_type = str(getattr(document, "mime_type", "") or "").lower()
+    file_name = str(getattr(document, "file_name", "") or "").lower()
+    if mime_type.startswith("image/"):
+        return True
+    return file_name.endswith((".png", ".jpg", ".jpeg", ".webp"))
+
+
 def make_template_folder_name(template_name: str) -> str:
     folder = re.sub(r'[<>:"/\\|?*\x00-\x1F]+', " ", str(template_name or ""))
     folder = re.sub(r"\s+", " ", folder).strip().strip(".")
@@ -227,6 +238,31 @@ def make_template_folder_name(template_name: str) -> str:
     while os.path.exists(os.path.join(TEMPLATES_DIR, folder)):
         folder = f"{base_folder}_{next(tempfile._get_candidate_names())}"
     return folder
+
+
+def get_preferred_project_font() -> str:
+    candidates = [
+        os.path.join(BASE_DIR, "HEADLINERBOLD.otf"),
+        os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return candidates[0]
+
+
+def attach_template_font(folder_path: str) -> str:
+    source_font_path = get_preferred_project_font()
+    font_name = os.path.basename(source_font_path)
+    target_font_path = os.path.join(folder_path, font_name)
+
+    if os.path.isfile(source_font_path) and not os.path.isfile(target_font_path):
+        try:
+            shutil.copy2(source_font_path, target_font_path)
+        except Exception as e:
+            print(f"[Templates] unable to attach font into '{folder_path}': {e}")
+
+    return f"templates/{os.path.basename(folder_path)}/{font_name}".replace("\\", "/")
 
 
 def build_default_template_config(template_name: str, folder_name: str, width: int, height: int) -> dict:
@@ -245,7 +281,7 @@ def build_default_template_config(template_name: str, folder_name: str, width: i
         "render_text": True,
         "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
         "template_path": f"templates/{folder_name}/template.png",
-        "font_bold_path": "C:/Windows/Fonts/tahomabd.ttf",
+        "font_bold_path": f"templates/{folder_name}/{os.path.basename(get_preferred_project_font())}",
         "image_mode": "full",
         "image_area_bottom": int(height * 0.64),
         "text_box": [text_left, text_top, text_right, text_bottom],
@@ -290,6 +326,7 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
 
     template_path = os.path.join(folder_path, "template.png")
     template_image.save(template_path, format="PNG")
+    attach_template_font(folder_path)
 
     config = build_default_template_config(template_name, folder_name, width, height)
     config_path = os.path.join(folder_path, "config.json")
@@ -321,6 +358,7 @@ def create_default_template_config_file(folder_name: str, folder_path: str, imag
         print(f"[Templates] unable to read image for '{folder_name}': {e}")
         return None
 
+    attach_template_font(folder_path)
     config = build_default_template_config(folder_name, folder_name, width, height)
     config["name"] = folder_name.replace("_", " ").strip() or folder_name
     config["template_path"] = os.path.relpath(image_path, BASE_DIR).replace("\\", "/")
@@ -812,6 +850,109 @@ def debug_log_arabic_render(stage: str, **data):
         pass
 
 
+def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
+    path = os.path.join(TEMPLATES_DIR, folder)
+    if not os.path.isdir(path):
+        return None, "template folder missing"
+
+    cfg_path = os.path.join(path, "config.json")
+    if not os.path.isfile(cfg_path):
+        fallback_image_path = find_template_image(path, {})
+        if not fallback_image_path or not os.path.isfile(fallback_image_path):
+            return None, "missing config.json and template image"
+
+        cfg = create_default_template_config_file(folder, path, fallback_image_path)
+        if not cfg:
+            return None, "failed to create default config"
+    else:
+        try:
+            with open(cfg_path, "r", encoding="utf-8-sig") as f:
+                cfg = json.load(f)
+        except Exception as e:
+            return None, f"json error: {e}"
+
+    if not bool(cfg.get("enabled", True)):
+        return None, "disabled via config.json"
+
+    if not isinstance(cfg, dict):
+        return None, "invalid config format"
+
+    attached_font_rel = attach_template_font(path)
+    cfg["id"] = folder
+    cfg["template_path"] = find_template_image(path, cfg)
+    cfg["font_bold_path"] = resolve_path(cfg.get("font_bold_path", "HEADLINERBOLD.otf"))
+    fallback_template_font = resolve_path(attached_font_rel)
+    project_font_fallback = get_preferred_project_font()
+    cfg["font_bold_path"] = ensure_existing_path(
+        cfg["font_bold_path"],
+        ensure_existing_path(fallback_template_font, project_font_fallback),
+    )
+
+    if cfg.get("name_font_bold_path"):
+        cfg["name_font_bold_path"] = resolve_path(cfg["name_font_bold_path"])
+        cfg["name_font_bold_path"] = ensure_existing_path(cfg["name_font_bold_path"], cfg["font_bold_path"])
+    if cfg.get("name_arabic_font_bold_path"):
+        cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
+        cfg["name_arabic_font_bold_path"] = ensure_existing_path(
+            cfg["name_arabic_font_bold_path"],
+            cfg.get("name_font_bold_path", cfg["font_bold_path"]),
+        )
+    if cfg.get("name_no_raqm_font_bold_path"):
+        cfg["name_no_raqm_font_bold_path"] = resolve_path(cfg["name_no_raqm_font_bold_path"])
+        cfg["name_no_raqm_font_bold_path"] = ensure_existing_path(
+            cfg["name_no_raqm_font_bold_path"],
+            cfg.get("name_arabic_font_bold_path", cfg.get("name_font_bold_path", cfg["font_bold_path"])),
+        )
+    if cfg.get("caption_font_bold_path"):
+        cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
+        cfg["caption_font_bold_path"] = ensure_existing_path(cfg["caption_font_bold_path"], cfg["font_bold_path"])
+
+    if not os.path.isfile(cfg["template_path"]):
+        return None, f"template not found: {cfg['template_path']}"
+
+    if "text_box" not in cfg:
+        if bool(cfg.get("render_text", True)):
+            try:
+                with Image.open(cfg["template_path"]) as template_img:
+                    width, height = template_img.size
+                cfg["text_box"] = build_default_text_box(width, height)
+                print(f"[Templates] generated default text_box for '{folder}'")
+            except Exception as e:
+                return None, f"unable to infer text_box: {e}"
+        else:
+            cfg["text_box"] = [0, 0, 1, 1]
+
+    if not os.path.isfile(cfg["font_bold_path"]):
+        return None, f"font not found: {cfg['font_bold_path']}"
+
+    if cfg.get("name_font_bold_path") and not os.path.isfile(cfg["name_font_bold_path"]):
+        return None, f"name font not found: {cfg['name_font_bold_path']}"
+    if cfg.get("name_arabic_font_bold_path") and not os.path.isfile(cfg["name_arabic_font_bold_path"]):
+        print(
+            f"[Templates] arabic name font not found for '{folder}': "
+            f"{cfg['name_arabic_font_bold_path']} - falling back to name_font_bold_path"
+        )
+        cfg["name_arabic_font_bold_path"] = cfg.get("name_font_bold_path", cfg["font_bold_path"])
+    if cfg.get("name_no_raqm_font_bold_path") and not os.path.isfile(cfg["name_no_raqm_font_bold_path"]):
+        print(
+            f"[Templates] no-raqm name font not found for '{folder}': "
+            f"{cfg['name_no_raqm_font_bold_path']} - falling back to arabic name font"
+        )
+        cfg["name_no_raqm_font_bold_path"] = cfg.get(
+            "name_arabic_font_bold_path",
+            cfg.get("name_font_bold_path", cfg["font_bold_path"]),
+        )
+
+    if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
+        return None, f"caption font not found: {cfg['caption_font_bold_path']}"
+
+    image_mode = cfg.get("image_mode", "full")
+    if image_mode == "box" and "image_box" not in cfg:
+        return None, "image_mode=box requires image_box"
+
+    return cfg, None
+
+
 def load_templates() -> dict:
     templates = {}
     disabled_templates = {"mubasher"}
@@ -826,95 +967,10 @@ def load_templates() -> dict:
             continue
         if folder in disabled_templates:
             continue
-
-        cfg_path = os.path.join(path, "config.json")
-        if not os.path.isfile(cfg_path):
-            fallback_image_path = find_template_image(path, {})
-            if not fallback_image_path or not os.path.isfile(fallback_image_path):
-                print(f"[Templates] skipping '{folder}': missing config.json and template image")
-                continue
-
-            cfg = create_default_template_config_file(folder, path, fallback_image_path)
-            if not cfg:
-                continue
-        else:
-            try:
-                with open(cfg_path, "r", encoding="utf-8-sig") as f:
-                    cfg = json.load(f)
-            except Exception as e:
-                print(f"[Templates] JSON error in {cfg_path}: {e}")
-                continue
-
-        if not bool(cfg.get("enabled", True)):
-            print(f"[Templates] '{folder}' disabled via config.json")
+        cfg, error = load_template_entry(folder)
+        if error:
+            print(f"[Templates] skipping '{folder}': {error}")
             continue
-
-        if not isinstance(cfg, dict):
-            print(f"[Templates] Invalid config format in {cfg_path}")
-            continue
-
-        cfg["id"] = folder
-        cfg["template_path"] = find_template_image(path, cfg)
-        cfg["font_bold_path"] = resolve_path(cfg.get("font_bold_path", "HEADLINERBOLD.otf"))
-
-        if cfg.get("name_font_bold_path"):
-            cfg["name_font_bold_path"] = resolve_path(cfg["name_font_bold_path"])
-        if cfg.get("name_arabic_font_bold_path"):
-            cfg["name_arabic_font_bold_path"] = resolve_path(cfg["name_arabic_font_bold_path"])
-        if cfg.get("name_no_raqm_font_bold_path"):
-            cfg["name_no_raqm_font_bold_path"] = resolve_path(cfg["name_no_raqm_font_bold_path"])
-        if cfg.get("caption_font_bold_path"):
-            cfg["caption_font_bold_path"] = resolve_path(cfg["caption_font_bold_path"])
-
-        if not os.path.isfile(cfg["template_path"]):
-            print(f"[Templates] template not found for '{folder}': {cfg['template_path']}")
-            continue
-
-        if "text_box" not in cfg:
-            if bool(cfg.get("render_text", True)):
-                try:
-                    with Image.open(cfg["template_path"]) as template_img:
-                        width, height = template_img.size
-                    cfg["text_box"] = build_default_text_box(width, height)
-                    print(f"[Templates] generated default text_box for '{folder}'")
-                except Exception as e:
-                    print(f"[Templates] unable to infer text_box for '{folder}': {e}")
-                    continue
-            else:
-                cfg["text_box"] = [0, 0, 1, 1]
-
-        if not os.path.isfile(cfg["font_bold_path"]):
-            print(f"[Templates] font not found for '{folder}': {cfg['font_bold_path']}")
-            continue
-
-        if cfg.get("name_font_bold_path") and not os.path.isfile(cfg["name_font_bold_path"]):
-            print(f"[Templates] name font not found for '{folder}': {cfg['name_font_bold_path']}")
-            continue
-        if cfg.get("name_arabic_font_bold_path") and not os.path.isfile(cfg["name_arabic_font_bold_path"]):
-            print(
-                f"[Templates] arabic name font not found for '{folder}': "
-                f"{cfg['name_arabic_font_bold_path']} - falling back to name_font_bold_path"
-            )
-            cfg["name_arabic_font_bold_path"] = cfg.get("name_font_bold_path", cfg["font_bold_path"])
-        if cfg.get("name_no_raqm_font_bold_path") and not os.path.isfile(cfg["name_no_raqm_font_bold_path"]):
-            print(
-                f"[Templates] no-raqm name font not found for '{folder}': "
-                f"{cfg['name_no_raqm_font_bold_path']} - falling back to arabic name font"
-            )
-            cfg["name_no_raqm_font_bold_path"] = cfg.get(
-                "name_arabic_font_bold_path",
-                cfg.get("name_font_bold_path", cfg["font_bold_path"]),
-            )
-
-        if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
-            print(f"[Templates] caption font not found for '{folder}': {cfg['caption_font_bold_path']}")
-            continue
-
-        image_mode = cfg.get("image_mode", "full")
-        if image_mode == "box" and "image_box" not in cfg:
-            print(f"[Templates] '{folder}' image_mode=box requires image_box in config.json")
-            continue
-
         templates[folder] = cfg
 
     print("[Templates] Loaded:", list(templates.keys()))
@@ -924,6 +980,23 @@ def load_templates() -> dict:
 def get_templates(context: ContextTypes.DEFAULT_TYPE) -> dict:
     context.bot_data["TEMPLATES"] = load_templates()
     return context.bot_data["TEMPLATES"]
+
+
+def register_new_template(context: ContextTypes.DEFAULT_TYPE, folder_name: str) -> tuple[Optional[dict], Optional[dict], Optional[str]]:
+    save_error = verify_template_saved(folder_name)
+    if save_error:
+        return None, None, save_error
+
+    cfg, load_error = load_template_entry(folder_name)
+    if load_error or not cfg:
+        return None, None, load_error or "تعذر تحميل القالب الجديد"
+
+    templates = get_templates(context)
+    templates[folder_name] = cfg
+    context.bot_data["TEMPLATES"] = dict(sorted(templates.items(), key=lambda item: item[0]))
+
+    state = enable_template_for_employees(folder_name)
+    return context.bot_data["TEMPLATES"], state, None
 
 
 def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
@@ -1606,7 +1679,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "news_img" not in context.user_data:
-        await update.message.reply_text("ابعت الصورة أولاً.")
         return
 
     if "template_id" not in context.user_data:
@@ -1686,7 +1758,7 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if context.user_data.get("role") != "admin":
-        await q.edit_message_text("هذه القائمة للمدير فقط. ابدأ من /start")
+        await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
         return
 
     templates = get_templates(context)
@@ -1735,7 +1807,7 @@ async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFA
     await q.answer()
 
     if context.user_data.get("role") != "admin":
-        await q.edit_message_text("هذه القائمة للمدير فقط. ابدأ من /start")
+        await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
         return
 
     templates = get_templates(context)
@@ -1803,30 +1875,27 @@ async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.get("pending_template_name", "قالب جديد"),
             bio.getvalue(),
         )
-        save_error = verify_template_saved(folder_name)
-        if save_error:
+        templates, state, register_error = register_new_template(context, folder_name)
+        if register_error:
             reset_design_state(context)
             context.user_data["role"] = "admin"
-            await update.message.reply_text(save_error, reply_markup=admin_menu_keyboard())
-            return
-        reset_design_state(context)
-        context.user_data["role"] = "admin"
-        templates = get_templates(context)
-        if folder_name not in templates:
             await update.message.reply_text(
-                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.",
+                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.\n"
+                f"السبب: {register_error}",
                 reply_markup=admin_menu_keyboard(),
             )
             return
-        state = enable_template_for_employees(folder_name)
+        reset_design_state(context)
+        context.user_data["role"] = "admin"
         await update.message.reply_text(
             f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}\n"
             f"المجلد: templates/{folder_name}",
             reply_markup=admin_menu_keyboard(),
         )
+        enabled_ids = set(state.get("enabled_templates", []))
         await update.message.reply_text(
-            admin_status_text(state, templates),
-            reply_markup=admin_menu_keyboard(),
+            "فعّل أو عطّل القوالب التي تظهر للموظفين:",
+            reply_markup=template_toggle_keyboard(templates, enabled_ids),
         )
         return
 
@@ -1881,6 +1950,9 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
             reset_design_state(context)
             await show_start_menu(update.message, context)
             return
+        if not is_image_document(document):
+            await update.message.reply_text("أرسل صورة قالب بصيغة PNG أو JPG أو WEBP.")
+            return
 
         file = await context.bot.get_file(document.file_id)
         bio = BytesIO()
@@ -1889,30 +1961,31 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
             context.user_data.get("pending_template_name", "قالب جديد"),
             bio.getvalue(),
         )
-        save_error = verify_template_saved(folder_name)
-        if save_error:
+        templates, state, register_error = register_new_template(context, folder_name)
+        if register_error:
             reset_design_state(context)
             context.user_data["role"] = "admin"
-            await update.message.reply_text(save_error, reply_markup=admin_menu_keyboard())
-            return
-        reset_design_state(context)
-        context.user_data["role"] = "admin"
-        templates = get_templates(context)
-        if folder_name not in templates:
             await update.message.reply_text(
-                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.",
+                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.\n"
+                f"السبب: {register_error}",
                 reply_markup=admin_menu_keyboard(),
             )
             return
-        state = enable_template_for_employees(folder_name)
+        reset_design_state(context)
+        context.user_data["role"] = "admin"
         await update.message.reply_text(
             f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}\n"
             f"المجلد: templates/{folder_name}"
         )
+        enabled_ids = set(state.get("enabled_templates", []))
         await update.message.reply_text(
-            admin_status_text(state, templates),
-            reply_markup=admin_menu_keyboard(),
+            "فعّل أو عطّل القوالب التي تظهر للموظفين:",
+            reply_markup=template_toggle_keyboard(templates, enabled_ids),
         )
+        return
+
+    if not is_image_document(document):
+        await update.message.reply_text("هذا الملف ليس صورة مدعومة.")
         return
 
     if context.user_data.get("role") not in {"admin", "employee"}:
@@ -2017,7 +2090,6 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if "news_img" not in context.user_data:
-        await update.message.reply_text("ابعت الصورة أولاً.")
         return
 
     if "template_id" not in context.user_data:
@@ -2075,7 +2147,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
     app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
-    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_image_document_v2))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_image_document_v2))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_v2))
 
     print("BASE_DIR:", BASE_DIR)
