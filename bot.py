@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 import tempfile
+import hashlib
 from io import BytesIO
 from typing import Optional, List, Set
 
@@ -107,6 +108,16 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
         ]
     )
 
+def make_template_callback_id(template_id: str) -> str:
+    return hashlib.sha1(template_id.encode("utf-8")).hexdigest()[:16]
+
+
+def find_template_id_by_callback_token(templates: dict, token: str) -> Optional[str]:
+    for template_id in templates.keys():
+        if make_template_callback_id(template_id) == token:
+            return template_id
+    return None
+
 
 def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKeyboardMarkup:
     rows = []
@@ -114,7 +125,12 @@ def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKe
         prefix = "✅" if tid in enabled_ids else "⬜"
         display_name = cfg.get("name", tid)
         rows.append(
-            [InlineKeyboardButton(f"{prefix} {display_name} [{tid}]", callback_data=f"admin_tpl:{tid}")]
+            [
+                InlineKeyboardButton(
+                    f"{prefix} {display_name} [{tid}]",
+                    callback_data=f"admin_tpl:{make_template_callback_id(tid)}",
+                )
+            ]
         )
     rows.append([InlineKeyboardButton("رجوع", callback_data="admin:menu")])
     return InlineKeyboardMarkup(rows)
@@ -281,6 +297,20 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
     return folder_name
+
+
+def verify_template_saved(folder_name: str) -> Optional[str]:
+    folder_path = os.path.join(TEMPLATES_DIR, folder_name)
+    config_path = os.path.join(folder_path, "config.json")
+    template_path = os.path.join(folder_path, "template.png")
+
+    if not os.path.isdir(folder_path):
+        return f"لم يتم إنشاء المجلد: templates/{folder_name}"
+    if not os.path.isfile(config_path):
+        return f"لم يتم إنشاء config.json داخل templates/{folder_name}"
+    if not os.path.isfile(template_path):
+        return f"لم يتم حفظ صورة القالب داخل templates/{folder_name}"
+    return None
 
 
 def create_default_template_config_file(folder_name: str, folder_path: str, image_path: str) -> Optional[dict]:
@@ -900,7 +930,9 @@ def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
     buttons = []
     for tid, cfg in templates.items():
         name = cfg.get("name", tid)
-        buttons.append([InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{tid}")])
+        buttons.append(
+            [InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{make_template_callback_id(tid)}")]
+        )
     return InlineKeyboardMarkup(buttons)
 
 
@@ -1707,7 +1739,8 @@ async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFA
         return
 
     templates = get_templates(context)
-    template_id = q.data.split(":", 1)[1]
+    callback_token = q.data.split(":", 1)[1]
+    template_id = find_template_id_by_callback_token(templates, callback_token)
     if template_id not in templates:
         await q.answer("القالب غير موجود", show_alert=True)
         return
@@ -1734,7 +1767,8 @@ async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TY
     templates = get_templates(context)
     state = load_admin_state()
     available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
-    template_id = q.data.split(":", 1)[1]
+    callback_token = q.data.split(":", 1)[1]
+    template_id = find_template_id_by_callback_token(available_templates, callback_token)
 
     if template_id not in available_templates:
         await q.edit_message_text("القالب غير موجود أو غير متاح لهذا الحساب. جرّب /start.")
@@ -1769,12 +1803,25 @@ async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.get("pending_template_name", "قالب جديد"),
             bio.getvalue(),
         )
+        save_error = verify_template_saved(folder_name)
+        if save_error:
+            reset_design_state(context)
+            context.user_data["role"] = "admin"
+            await update.message.reply_text(save_error, reply_markup=admin_menu_keyboard())
+            return
         reset_design_state(context)
         context.user_data["role"] = "admin"
         templates = get_templates(context)
+        if folder_name not in templates:
+            await update.message.reply_text(
+                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.",
+                reply_markup=admin_menu_keyboard(),
+            )
+            return
         state = enable_template_for_employees(folder_name)
         await update.message.reply_text(
-            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}",
+            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}\n"
+            f"المجلد: templates/{folder_name}",
             reply_markup=admin_menu_keyboard(),
         )
         await update.message.reply_text(
@@ -1842,12 +1889,25 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
             context.user_data.get("pending_template_name", "قالب جديد"),
             bio.getvalue(),
         )
+        save_error = verify_template_saved(folder_name)
+        if save_error:
+            reset_design_state(context)
+            context.user_data["role"] = "admin"
+            await update.message.reply_text(save_error, reply_markup=admin_menu_keyboard())
+            return
         reset_design_state(context)
         context.user_data["role"] = "admin"
         templates = get_templates(context)
+        if folder_name not in templates:
+            await update.message.reply_text(
+                f"تم حفظ القالب في templates/{folder_name} لكنه لم يظهر في إدارة القوالب.",
+                reply_markup=admin_menu_keyboard(),
+            )
+            return
         state = enable_template_for_employees(folder_name)
         await update.message.reply_text(
-            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}"
+            f"تمت إضافة القالب بنجاح: {templates.get(folder_name, {}).get('name', folder_name)}\n"
+            f"المجلد: templates/{folder_name}"
         )
         await update.message.reply_text(
             admin_status_text(state, templates),
