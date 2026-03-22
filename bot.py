@@ -34,6 +34,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 ADMIN_STATE_PATH = os.path.join(DATA_DIR, "admin_state.json")
 PILLOW_HAS_RAQM = bool(features.check("raqm"))
 ADMIN_PASSWORD = "1234"
+TEMPLATE_CACHE_KEY = "TEMPLATES"
+TEMPLATE_CACHE_SIGNATURE_KEY = "TEMPLATES_SIGNATURE"
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -1085,9 +1087,57 @@ def load_templates() -> dict:
     return templates
 
 
-def get_templates(context: ContextTypes.DEFAULT_TYPE) -> dict:
-    context.bot_data["TEMPLATES"] = load_templates()
-    return context.bot_data["TEMPLATES"]
+def get_templates_signature() -> tuple:
+    if not os.path.isdir(TEMPLATES_DIR):
+        return ()
+
+    relevant_suffixes = (
+        ".json",
+        ".template.json",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".otf",
+        ".ttf",
+    )
+    signature = []
+
+    for root, dirs, files in os.walk(TEMPLATES_DIR):
+        dirs.sort()
+        rel_root = os.path.relpath(root, TEMPLATES_DIR)
+        for name in sorted(files):
+            lower_name = name.lower()
+            if not lower_name.endswith(relevant_suffixes):
+                continue
+            full_path = os.path.join(root, name)
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                continue
+            signature.append(
+                (
+                    os.path.join(rel_root, name).replace("\\", "/"),
+                    stat.st_mtime_ns,
+                    stat.st_size,
+                )
+            )
+
+    return tuple(signature)
+
+
+def get_templates(context: ContextTypes.DEFAULT_TYPE, force_reload: bool = False) -> dict:
+    current_signature = get_templates_signature()
+    cached_signature = context.bot_data.get(TEMPLATE_CACHE_SIGNATURE_KEY)
+    cached_templates = context.bot_data.get(TEMPLATE_CACHE_KEY)
+
+    if not force_reload and cached_templates is not None and cached_signature == current_signature:
+        return cached_templates
+
+    templates = load_templates()
+    context.bot_data[TEMPLATE_CACHE_KEY] = templates
+    context.bot_data[TEMPLATE_CACHE_SIGNATURE_KEY] = current_signature
+    return templates
 
 
 def register_new_template(context: ContextTypes.DEFAULT_TYPE, folder_name: str) -> tuple[Optional[dict], Optional[dict], Optional[str]]:
@@ -1099,12 +1149,10 @@ def register_new_template(context: ContextTypes.DEFAULT_TYPE, folder_name: str) 
     if load_error or not cfg:
         return None, None, load_error or "تعذر تحميل القالب الجديد"
 
-    templates = get_templates(context)
-    templates[folder_name] = cfg
-    context.bot_data["TEMPLATES"] = dict(sorted(templates.items(), key=lambda item: item[0]))
+    templates = get_templates(context, force_reload=True)
 
     state = enable_template_for_employees(folder_name)
-    return context.bot_data["TEMPLATES"], state, None
+    return templates, state, None
 
 
 def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
