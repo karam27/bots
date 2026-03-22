@@ -1,0 +1,40 @@
+{
+  "id": "akhbari_blue",
+  "name": "اخباري",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في القالب الإخباري.",
+  "template_path": "templates/قالب اخباري.jpeg",
+  "font_bold_path": "templates/classic/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 1210,
+  "text_box": [110, 1260, 1520, 1850],
+  "template_cutouts": [
+    {
+      "shape": "rectangle",
+      "box": [0, 0, 1632, 1210]
+    }
+  ],
+  "template_overlay_boxes": [
+    [1180, 20, 1605, 230]
+  ],
+  "max_font_size": 108,
+  "min_font_size": 54,
+  "text_color": [255, 255, 255],
+  "shadow_color": [0, 0, 0, 150],
+  "shadow_offset": [2, 3],
+  "top_bias": 0.24,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 90,
+  "text_padding_y": 34,
+  "line_spacing_factor": 0.16,
+  "short_line_spacing_factor": 0.08,
+  "max_lines": 4,
+  "short_words_threshold": 10,
+  "short_centered_layout": true,
+  "short_center_offset": -8,
+  "short_fill_ratio": 0.48
+}

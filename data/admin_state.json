@@ -6,8 +6,9 @@
     1107450520
   ],
   "enabled_templates": [
+    "akhbari_blue",
     "classic",
-    "mutabaa_ikhbariya",
-    "iqtihamat"
+    "iqtihamat",
+    "mutabaa_ikhbariya"
   ]
 }

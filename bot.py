@@ -998,6 +998,54 @@ def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
     return cfg, None
 
 
+def load_loose_template_entry(cfg_path: str) -> tuple[Optional[dict], Optional[str]]:
+    try:
+        with open(cfg_path, "r", encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except Exception as e:
+        return None, f"json error: {e}"
+
+    if not isinstance(cfg, dict):
+        return None, "invalid config format"
+    if not bool(cfg.get("enabled", True)):
+        return None, "disabled via config.json"
+
+    cfg["id"] = str(cfg.get("id") or os.path.splitext(os.path.basename(cfg_path))[0])
+    cfg["template_path"] = resolve_path(cfg.get("template_path", ""))
+    cfg["font_bold_path"] = ensure_existing_path(
+        resolve_path(cfg.get("font_bold_path", "")),
+        get_preferred_project_font(),
+    )
+
+    if cfg.get("caption_font_bold_path"):
+        cfg["caption_font_bold_path"] = ensure_existing_path(
+            resolve_path(cfg["caption_font_bold_path"]),
+            cfg["font_bold_path"],
+        )
+
+    if not os.path.isfile(cfg["template_path"]):
+        return None, f"template not found: {cfg['template_path']}"
+    if not os.path.isfile(cfg["font_bold_path"]):
+        return None, f"font not found: {cfg['font_bold_path']}"
+
+    if "text_box" not in cfg:
+        if bool(cfg.get("render_text", True)):
+            try:
+                with Image.open(cfg["template_path"]) as template_img:
+                    width, height = template_img.size
+                cfg["text_box"] = build_default_text_box(width, height)
+            except Exception as e:
+                return None, f"unable to infer text_box: {e}"
+        else:
+            cfg["text_box"] = [0, 0, 1, 1]
+
+    image_mode = cfg.get("image_mode", "full")
+    if image_mode == "box" and "image_box" not in cfg:
+        return None, "image_mode=box requires image_box"
+
+    return cfg, None
+
+
 def load_templates() -> dict:
     templates = {}
     disabled_templates = {"mubasher"}
@@ -1017,6 +1065,19 @@ def load_templates() -> dict:
             print(f"[Templates] skipping '{folder}': {error}")
             continue
         template_id = str(cfg.get("id") or folder)
+        templates[template_id] = cfg
+
+    for file_name in sorted(os.listdir(TEMPLATES_DIR)):
+        if not file_name.endswith(".template.json"):
+            continue
+        cfg_path = os.path.join(TEMPLATES_DIR, file_name)
+        if not os.path.isfile(cfg_path):
+            continue
+        cfg, error = load_loose_template_entry(cfg_path)
+        if error:
+            print(f"[Templates] skipping loose config '{file_name}': {error}")
+            continue
+        template_id = str(cfg.get("id") or os.path.splitext(file_name)[0])
         templates[template_id] = cfg
 
     print("[Templates] Loaded:", list(templates.keys()))
