@@ -1,7 +1,7 @@
 {
   "id": "akhbari_blue",
   "name": "اخباري",
-  "enabled": false,
+  "enabled": true,
   "requires_name": false,
   "requires_text": true,
   "render_text": true,
