@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import re
@@ -1131,10 +1132,14 @@ async def send_rendered_post(
     img: Image.Image,
     text: str = "",
 ):
-    out = render_post(img, text, template_cfg)
-    out_bio = BytesIO()
-    out.save(out_bio, format="PNG")
-    out_bio.seek(0)
+    def _render_to_png_bytes():
+        out = render_post(img, text, template_cfg)
+        out_bio = BytesIO()
+        out.save(out_bio, format="PNG")
+        out_bio.seek(0)
+        return out_bio
+
+    out_bio = await asyncio.to_thread(_render_to_png_bytes)
 
     await update.message.reply_document(
         document=out_bio,
@@ -1333,6 +1338,7 @@ $bmp.Dispose()
             check=True,
             capture_output=True,
             text=True,
+            timeout=20,
         )
         if not os.path.isfile(payload["out_path"]):
             return None
@@ -1357,7 +1363,9 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     template_path = template_cfg["template_path"]
     font_bold_path = ensure_existing_path(template_cfg["font_bold_path"])
 
-    original_base = Image.open(template_path).convert("RGBA")
+    with Image.open(template_path) as template_image:
+        original_base = template_image.convert("RGBA")
+
     base = original_base.copy()
     base = apply_template_cutouts(base, template_cfg.get("template_cutouts", []))
 
