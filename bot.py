@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import hashlib
 import shutil
+from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
 
@@ -574,13 +575,57 @@ def build_shape_mask(size, shape: str, bleed: int = 0, feather: float = 0.0):
 
 
 # ===================== Remove white background =====================
-def remove_near_white_background(img: Image.Image, threshold: int = 235, softness: int = 25) -> Image.Image:
+def remove_near_white_background(
+    img: Image.Image,
+    threshold: int = 235,
+    softness: int = 25,
+    mode: str = "all",
+) -> Image.Image:
     """
     Removes near-white background and makes it transparent تدريجياً.
     """
     img = img.convert("RGBA")
     pixels = img.load()
     w, h = img.size
+
+    if str(mode).lower() == "edge_connected":
+        visited = set()
+        queue = deque()
+
+        def is_near_white(px) -> bool:
+            r, g, b, _ = px
+            mx = max(r, g, b)
+            mn = min(r, g, b)
+            return (
+                (r >= threshold and g >= threshold and b >= threshold)
+                or (mx >= threshold and (mx - mn) <= 18)
+            )
+
+        for x in range(w):
+            queue.append((x, 0))
+            queue.append((x, h - 1))
+        for y in range(h):
+            queue.append((0, y))
+            queue.append((w - 1, y))
+
+        while queue:
+            x, y = queue.popleft()
+            if (x, y) in visited or x < 0 or y < 0 or x >= w or y >= h:
+                continue
+            visited.add((x, y))
+            if not is_near_white(pixels[x, y]):
+                continue
+            queue.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+
+        for x, y in visited:
+            if not is_near_white(pixels[x, y]):
+                continue
+            r, g, b, a = pixels[x, y]
+            whiteness = (r + g + b) / 3
+            alpha = int(max(0, min(255, (255 - whiteness) * (255 / max(1, softness)))))
+            pixels[x, y] = (r, g, b, min(a, alpha))
+
+        return img
 
     for y in range(h):
         for x in range(w):
@@ -878,7 +923,7 @@ def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
         return None, "invalid config format"
 
     attached_font_rel = attach_template_font(path)
-    cfg["id"] = folder
+    cfg["id"] = str(cfg.get("id") or folder)
     cfg["template_path"] = find_template_image(path, cfg)
     cfg["font_bold_path"] = resolve_path(cfg.get("font_bold_path", "HEADLINERBOLD.otf"))
     fallback_template_font = resolve_path(attached_font_rel)
@@ -971,7 +1016,8 @@ def load_templates() -> dict:
         if error:
             print(f"[Templates] skipping '{folder}': {error}")
             continue
-        templates[folder] = cfg
+        template_id = str(cfg.get("id") or folder)
+        templates[template_id] = cfg
 
     print("[Templates] Loaded:", list(templates.keys()))
     return templates
@@ -1250,7 +1296,8 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     template_path = template_cfg["template_path"]
     font_bold_path = ensure_existing_path(template_cfg["font_bold_path"])
 
-    base = Image.open(template_path).convert("RGBA")
+    original_base = Image.open(template_path).convert("RGBA")
+    base = original_base.copy()
     base = apply_template_cutouts(base, template_cfg.get("template_cutouts", []))
 
     W, H = base.size
@@ -1263,6 +1310,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             news_img,
             threshold=int(template_cfg.get("white_bg_threshold", 235)),
             softness=int(template_cfg.get("white_bg_softness", 25)),
+            mode=str(template_cfg.get("white_bg_mode", "all")),
         )
         news_img = autocrop_transparent(
             news_img,
@@ -1314,6 +1362,42 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         canvas.paste(image_layer, (mask_box[0], mask_box[1]), mask)
 
     canvas.alpha_composite(base)
+    for overlay_box in template_cfg.get("template_overlay_boxes", []):
+        if not isinstance(overlay_box, (list, tuple)) or len(overlay_box) != 4:
+            continue
+        l, t, r, b = [int(v) for v in overlay_box]
+        if r <= l or b <= t:
+            continue
+        overlay_crop = original_base.crop((l, t, r, b))
+        canvas.alpha_composite(overlay_crop, (l, t))
+
+    for overlay_cfg in template_cfg.get("image_overlays", []):
+        if not isinstance(overlay_cfg, dict):
+            continue
+        overlay_path = ensure_existing_path(resolve_path(overlay_cfg.get("path", "")))
+        overlay_box = overlay_cfg.get("box")
+        if not overlay_path or not overlay_box or len(overlay_box) != 4 or not os.path.isfile(overlay_path):
+            continue
+        l, t, r, b = [int(v) for v in overlay_box]
+        if r <= l or b <= t:
+            continue
+        try:
+            with Image.open(overlay_path).convert("RGBA") as overlay_img:
+                if bool(overlay_cfg.get("remove_white_bg", False)):
+                    overlay_img = remove_near_white_background(
+                        overlay_img,
+                        threshold=int(overlay_cfg.get("white_bg_threshold", 235)),
+                        softness=int(overlay_cfg.get("white_bg_softness", 25)),
+                        mode=str(overlay_cfg.get("white_bg_mode", "all")),
+                    )
+                    overlay_img = autocrop_transparent(
+                        overlay_img,
+                        padding=int(overlay_cfg.get("transparent_crop_padding", 2)),
+                    )
+                overlay_img = overlay_img.resize((r - l, b - t), Image.LANCZOS)
+                canvas.alpha_composite(overlay_img, (l, t))
+        except Exception:
+            pass
     draw = ImageDraw.Draw(canvas)
 
     if template_cfg.get("caption_bg_box"):
@@ -1337,6 +1421,37 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             min_font_size=int(template_cfg.get("caption_min_font_size", 36)),
             max_lines=int(template_cfg.get("caption_max_lines", 2)),
             reshape_enabled=bool(template_cfg.get("caption_reshape_text", True)),
+        )
+
+    if template_cfg.get("brand_text") and template_cfg.get("brand_box"):
+        draw_centered_text_block(
+            draw=draw,
+            text=str(template_cfg.get("brand_text", "")),
+            font_path=template_cfg.get("brand_font_bold_path", font_bold_path),
+            box=tuple(template_cfg["brand_box"]),
+            text_color=tuple(template_cfg.get("brand_text_color", [255, 255, 255])),
+            shadow_color=tuple(template_cfg.get("brand_shadow_color", [0, 0, 0, 90])),
+            shadow_offset=tuple(template_cfg.get("brand_shadow_offset", [1, 2])),
+            max_font_size=int(template_cfg.get("brand_max_font_size", 52)),
+            min_font_size=int(template_cfg.get("brand_min_font_size", 24)),
+            max_lines=int(template_cfg.get("brand_max_lines", 1)),
+            reshape_enabled=bool(template_cfg.get("brand_reshape_text", True)),
+        )
+
+    if template_cfg.get("brand_subtext") and template_cfg.get("brand_subtext_box"):
+        draw_centered_text_block(
+            draw=draw,
+            text=str(template_cfg.get("brand_subtext", "")),
+            font_path=template_cfg.get("brand_subtext_font_bold_path", template_cfg.get("brand_font_bold_path", font_bold_path)),
+            box=tuple(template_cfg["brand_subtext_box"]),
+            text_color=tuple(template_cfg.get("brand_subtext_color", [255, 255, 255])),
+            shadow_color=tuple(template_cfg.get("brand_subtext_shadow_color", [0, 0, 0, 90])),
+            shadow_offset=tuple(template_cfg.get("brand_subtext_shadow_offset", [1, 2])),
+            max_font_size=int(template_cfg.get("brand_subtext_max_font_size", 34)),
+            min_font_size=int(template_cfg.get("brand_subtext_min_font_size", 18)),
+            max_lines=int(template_cfg.get("brand_subtext_max_lines", 1)),
+            reshape_enabled=bool(template_cfg.get("brand_subtext_reshape_text", True)),
+            prefer_raqm=bool(template_cfg.get("brand_subtext_prefer_raqm", True)),
         )
 
     if template_cfg.get("name_box"):

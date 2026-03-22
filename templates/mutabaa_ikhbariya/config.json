@@ -8,9 +8,28 @@
   "template_path": "templates/mutabaa_ikhbariya/template.png",
   "font_bold_path": "templates/mutabaa_ikhbariya/HEADLINERBOLD.otf",
   "image_mode": "full",
-  "image_area_bottom": 775,
-  "text_box": [70, 820, 1010, 1210],
-  "template_cutouts": [],
+  "image_area_bottom": 782,
+  "text_box": [70, 800, 1010, 1165],
+  "template_cutouts": [
+    {
+      "shape": "rectangle",
+      "box": [0, 0, 1080, 782]
+    }
+  ],
+  "template_overlay_boxes": [
+    [40, 52, 360, 118]
+  ],
+  "image_overlays": [
+    {
+      "path": "templates/mutabaa_ikhbariya/IMG_0188.PNG",
+      "box": [820, 34, 995, 132],
+      "remove_white_bg": true,
+      "white_bg_mode": "edge_connected",
+      "white_bg_threshold": 245,
+      "white_bg_softness": 18,
+      "transparent_crop_padding": 1
+    }
+  ],
   "max_font_size": 92,
   "min_font_size": 44,
   "text_color": [255, 255, 255],
@@ -22,19 +41,25 @@
   "text_padding_x": 45,
   "text_padding_y": 24,
   "line_spacing_factor": 0.18,
-  "short_line_spacing_factor": 0.14,
+  "short_line_spacing_factor": 0.06,
   "max_lines": 4,
+  "short_words_threshold": 10,
   "short_centered_layout": true,
-  "short_center_offset": 0,
-  "short_fill_ratio": 0.72,
+  "short_center_offset": -20,
+  "short_fill_ratio": 0.48,
+  "caption_bg_box": [40, 52, 360, 118],
+  "caption_bg_fill": [194, 0, 0, 255],
+  "caption_bg_radius": 0,
   "caption_text": "متابعة اخبارية",
-  "caption_box": [55, 55, 345, 120],
+  "caption_box": [60, 55, 340, 120],
   "caption_font_bold_path": "templates/mutabaa_ikhbariya/HEADLINERBOLD.otf",
   "caption_text_color": [255, 255, 255],
   "caption_shadow_color": [0, 0, 0, 90],
   "caption_shadow_offset": [1, 2],
-  "caption_max_font_size": 44,
+  "caption_max_font_size": 40,
   "caption_min_font_size": 24,
   "caption_max_lines": 1,
-  "caption_reshape_text": true
+  "caption_reshape_text": true,
+  "brand_text": "",
+  "brand_subtext": ""
 }

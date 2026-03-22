@@ -1,0 +1,35 @@
+{
+  "id": "iqtihamat",
+  "name": "الاقتحامات",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في تصميم الاقتحامات.",
+  "template_path": "templates/الاقتحامات/IMG_1601.JPEG",
+  "font_bold_path": "templates/classic/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 1520,
+  "text_box": [160, 1450, 1470, 1830],
+  "template_cutouts": [
+    {
+      "shape": "rectangle",
+      "box": [250, 170, 1380, 1220]
+    }
+  ],
+  "text_color": [255, 255, 255],
+  "shadow_color": [0, 0, 0, 145],
+  "shadow_offset": [2, 3],
+  "top_bias": 0.18,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 90,
+  "text_padding_y": 30,
+  "line_spacing_factor": 0.16,
+  "short_line_spacing_factor": 0.08,
+  "max_lines": 3,
+  "short_words_threshold": 10,
+  "short_centered_layout": true,
+  "short_center_offset": -8,
+  "short_fill_ratio": 0.42
+}
