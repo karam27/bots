@@ -18,8 +18,9 @@
     }
   ],
   "template_overlay_boxes": [
-    [1180, 20, 1615, 220]
+    [1085, 8, 1632, 220]
   ],
+  "image_overlays": [],
   "max_font_size": 118,
   "min_font_size": 60,
   "text_color": [255, 255, 255],
