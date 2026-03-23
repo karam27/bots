@@ -1151,7 +1151,7 @@ def register_new_template(context: ContextTypes.DEFAULT_TYPE, folder_name: str) 
 
     templates = get_templates(context, force_reload=True)
 
-    state = enable_template_for_employees(folder_name)
+    state = enable_template_for_employees(str(cfg.get("id") or folder_name))
     return templates, state, None
 
 
