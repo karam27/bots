@@ -197,7 +197,7 @@ async def show_start_menu(target_message, context: ContextTypes.DEFAULT_TYPE, te
 
 
 async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE):
-    templates = get_templates(context)
+    templates = get_templates(context, force_reload=True)
     state = load_admin_state()
     role = context.user_data.get("role")
     available_templates = get_enabled_templates(templates, state, role)
@@ -2006,7 +2006,7 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
         return
 
-    templates = get_templates(context)
+    templates = get_templates(context, force_reload=True)
     state = load_admin_state()
     action = q.data.split(":", 1)[1]
 
@@ -2055,7 +2055,7 @@ async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFA
         await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
         return
 
-    templates = get_templates(context)
+    templates = get_templates(context, force_reload=True)
     callback_token = q.data.split(":", 1)[1]
     template_id = find_template_id_by_callback_token(templates, callback_token)
     if template_id not in templates:
@@ -2081,7 +2081,7 @@ async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TY
     q = update.callback_query
     await q.answer()
 
-    templates = get_templates(context)
+    templates = get_templates(context, force_reload=True)
     state = load_admin_state()
     available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
     callback_token = q.data.split(":", 1)[1]
