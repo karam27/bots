@@ -166,7 +166,7 @@ def employee_count_text(state: dict) -> str:
     current = len(state.get("employee_ids", []))
     limit = int(state.get("max_employees", 0) or 0)
     if limit <= 0:
-        return f"{current} / غير محدد"
+        return str(current)
     return f"{current} / {limit}"
 
 
@@ -218,7 +218,6 @@ async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE
 def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
     keep_keys = {
         "role",
-        "awaiting_admin_password",
         "awaiting_max_employees",
         "awaiting_new_template_name",
         "awaiting_new_template_image",
@@ -1976,8 +1975,14 @@ async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     if role == "admin":
-        context.user_data["awaiting_admin_password"] = True
-        await q.edit_message_text("اكتب كلمة سر المدير.")
+        context.user_data["role"] = "admin"
+        templates = get_templates(context, force_reload=True)
+        state = load_admin_state()
+        await q.edit_message_text("تم تسجيلك كمدير.")
+        await q.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
         return
 
     state = load_admin_state()
@@ -2293,24 +2298,6 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_new_template_image"] = True
         await update.message.reply_text(
             "أرسل الآن صورة القالب الجديدة. الأفضل إرسالها كملف للحفاظ على الجودة والشفافية."
-        )
-        return
-
-    if context.user_data.get("awaiting_admin_password"):
-        state = load_admin_state()
-        password = update.message.text.strip()
-        if password != str(state.get("admin_password", ADMIN_PASSWORD)):
-            reset_design_state(context)
-            await update.message.reply_text("كلمة المرور غير صحيحة.")
-            await show_start_menu(update.message, context)
-            return
-
-        reset_design_state(context)
-        context.user_data["role"] = "admin"
-        templates = get_templates(context)
-        await update.message.reply_text(
-            admin_status_text(state, templates),
-            reply_markup=admin_menu_keyboard(),
         )
         return
 
