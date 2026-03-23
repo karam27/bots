@@ -21,7 +21,7 @@
   ],
   "image_overlays": [
     {
-      "path": "templates/mutabaa_ikhbariya/IMG_0188.PNG",
+      "path": "templates/breaking/logo.png",
       "box": [820, 34, 995, 132],
       "remove_white_bg": true,
       "white_bg_mode": "edge_connected",
@@ -45,8 +45,9 @@
   "max_lines": 4,
   "short_words_threshold": 10,
   "short_centered_layout": true,
-  "short_center_offset": -20,
+  "short_center_offset": 0,
   "short_fill_ratio": 0.48,
+  "stretch_short_text": false,
   "caption_bg_box": [40, 52, 360, 118],
   "caption_bg_fill": [194, 0, 0, 255],
   "caption_bg_radius": 0,

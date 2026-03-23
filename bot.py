@@ -36,6 +36,7 @@ PILLOW_HAS_RAQM = bool(features.check("raqm"))
 ADMIN_PASSWORD = "1234"
 TEMPLATE_CACHE_KEY = "TEMPLATES"
 TEMPLATE_CACHE_SIGNATURE_KEY = "TEMPLATES_SIGNATURE"
+DEFAULT_TEMPLATE_ID = "classic"
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -122,6 +123,16 @@ def find_template_id_by_callback_token(templates: dict, token: str) -> Optional[
         if make_template_callback_id(template_id) == token:
             return template_id
     return None
+
+
+def sort_templates_with_default_first(templates: dict) -> dict:
+    if not templates:
+        return templates
+    ordered_ids = sorted(
+        templates.keys(),
+        key=lambda tid: (0 if tid == DEFAULT_TEMPLATE_ID else 1, str(templates[tid].get("name", tid))),
+    )
+    return {tid: templates[tid] for tid in ordered_ids}
 
 
 def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKeyboardMarkup:
@@ -1157,7 +1168,7 @@ def register_new_template(context: ContextTypes.DEFAULT_TYPE, folder_name: str) 
 
 def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
     buttons = []
-    for tid, cfg in templates.items():
+    for tid, cfg in sort_templates_with_default_first(templates).items():
         name = cfg.get("name", tid)
         buttons.append(
             [InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{make_template_callback_id(tid)}")]
@@ -1168,6 +1179,8 @@ def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
 def get_template_cfg(templates: dict, template_id: Optional[str]) -> dict:
     if template_id and template_id in templates:
         return templates[template_id]
+    if DEFAULT_TEMPLATE_ID in templates:
+        return templates[DEFAULT_TEMPLATE_ID]
     if templates:
         return next(iter(templates.values()))
     raise RuntimeError("No templates found. Add templates/<name>/config.json + template image")

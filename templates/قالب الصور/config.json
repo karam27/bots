@@ -1,0 +1,46 @@
+{
+  "name": "قالب الصور",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
+  "template_path": "templates/قالب الصور/قالب الصور.jpeg",
+  "font_bold_path": "templates/قالب الصور/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 864,
+  "text_box": [
+    64,
+    918,
+    1015,
+    1269
+  ],
+  "template_cutouts": [],
+  "max_font_size": 81,
+  "min_font_size": 40,
+  "text_color": [
+    255,
+    255,
+    255
+  ],
+  "shadow_color": [
+    0,
+    0,
+    0,
+    160
+  ],
+  "shadow_offset": [
+    2,
+    3
+  ],
+  "top_bias": 0.3,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 54,
+  "text_padding_y": 27,
+  "line_spacing_factor": 0.22,
+  "max_lines": 4,
+  "short_centered_layout": true,
+  "short_center_offset": 0,
+  "short_fill_ratio": 0.65
+}
