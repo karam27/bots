@@ -10,17 +10,20 @@
   "font_bold_path": "templates/breaking/HEADLINERBOLD.otf",
   "image_mode": "full",
   "image_area_bottom": 1140,
-  "text_box": [90, 1180, 1540, 1940],
+  "text_box": [130, 1180, 1500, 1940],
   "template_cutouts": [
     {
       "shape": "rectangle",
       "box": [0, 0, 1632, 1140]
     }
   ],
-  "template_overlay_boxes": [
-    [1085, 8, 1632, 220]
+  "template_overlay_boxes": [],
+  "image_overlays": [
+    {
+      "path": "templates/breaking/logo.png",
+      "box": [1098, 18, 1588, 192]
+    }
   ],
-  "image_overlays": [],
   "max_font_size": 118,
   "min_font_size": 60,
   "text_color": [255, 255, 255],
@@ -29,13 +32,15 @@
   "top_bias": 0.2,
   "text_align": "center",
   "short_text_align": "center",
-  "text_padding_x": 100,
+  "text_padding_x": 150,
   "text_padding_y": 44,
-  "line_spacing_factor": 0.18,
-  "short_line_spacing_factor": 0.08,
+  "line_spacing_factor": 0.12,
+  "short_line_spacing_factor": 0.04,
   "max_lines": 4,
   "short_words_threshold": 10,
+  "stretch_short_text": false,
+  "stretch_long_text": false,
   "short_centered_layout": true,
-  "short_center_offset": -18,
-  "short_fill_ratio": 0.5
+  "short_center_offset": -80,
+  "short_fill_ratio": 0.26
 }

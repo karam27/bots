@@ -1512,10 +1512,17 @@ def split_name_and_subtitle(text: str, template_cfg: dict) -> tuple[str, str]:
 
 
 def split_text_segments(text: str, separator: str = "|", max_parts: int = 3) -> list[str]:
-    cleaned = clean_text_safe(text)
-    if not cleaned:
+    raw_text = str(text or "").strip()
+    if not raw_text:
         return []
-    parts = [clean_text_safe(part) for part in cleaned.split(separator, max_parts - 1)]
+
+    separator = str(separator or "|")
+    if separator:
+        raw_parts = raw_text.split(separator, max_parts - 1)
+    else:
+        raw_parts = [raw_text]
+
+    parts = [clean_text_safe(part) for part in raw_parts]
     return [part for part in parts if part]
 
 

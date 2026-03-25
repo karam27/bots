@@ -17,8 +17,12 @@
       "box": [0, 0, 1632, 1210]
     }
   ],
-  "template_overlay_boxes": [
-    [1180, 20, 1605, 230]
+  "template_overlay_boxes": [],
+  "image_overlays": [
+    {
+      "path": "templates/akhbari_blue/logo.png",
+      "box": [1188, 34, 1592, 181]
+    }
   ],
   "max_font_size": 108,
   "min_font_size": 54,
@@ -30,11 +34,13 @@
   "short_text_align": "center",
   "text_padding_x": 90,
   "text_padding_y": 34,
-  "line_spacing_factor": 0.16,
-  "short_line_spacing_factor": 0.08,
+  "line_spacing_factor": 0.12,
+  "short_line_spacing_factor": 0.04,
   "max_lines": 4,
   "short_words_threshold": 10,
+  "stretch_short_text": false,
+  "stretch_long_text": false,
   "short_centered_layout": true,
-  "short_center_offset": -8,
-  "short_fill_ratio": 0.48
+  "short_center_offset": -70,
+  "short_fill_ratio": 0.28
 }
