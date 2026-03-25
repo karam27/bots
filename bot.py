@@ -1464,6 +1464,24 @@ def split_name_and_subtitle(text: str, template_cfg: dict) -> tuple[str, str]:
     if separator and separator in cleaned:
         name_text, subtitle_text = cleaned.split(separator, 1)
         return clean_text_safe(name_text), clean_text_safe(subtitle_text)
+    split_markers = template_cfg.get("name_subtitle_split_markers", [])
+    if isinstance(split_markers, (list, tuple)):
+        marker_match = None
+        for marker in split_markers:
+            marker_text = clean_text_safe(str(marker))
+            if not marker_text:
+                continue
+            idx = cleaned.find(marker_text)
+            if idx <= 0:
+                continue
+            if marker_match is None or idx < marker_match[0]:
+                marker_match = (idx, marker_text)
+        if marker_match is not None:
+            idx, marker_text = marker_match
+            name_text = clean_text_safe(cleaned[:idx])
+            subtitle_text = clean_text_safe(cleaned[idx:])
+            if name_text and subtitle_text:
+                return name_text, subtitle_text
     auto_split_words = int(template_cfg.get("name_subtitle_auto_split_words", 0))
     words = cleaned.split()
     if auto_split_words > 0 and len(words) > auto_split_words:
