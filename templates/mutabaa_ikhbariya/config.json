@@ -21,13 +21,8 @@
   ],
   "image_overlays": [
     {
-      "path": "templates/breaking/logo.png",
-      "box": [820, 34, 995, 132],
-      "remove_white_bg": true,
-      "white_bg_mode": "edge_connected",
-      "white_bg_threshold": 245,
-      "white_bg_softness": 18,
-      "transparent_crop_padding": 1
+      "path": "templates/mutabaa_ikhbariya/logo.png",
+      "box": [820, 34, 995, 132]
     }
   ],
   "max_font_size": 92,
