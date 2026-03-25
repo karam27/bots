@@ -17,6 +17,7 @@ from bidi.algorithm import get_display
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -941,6 +942,16 @@ def safe_log(*parts):
     except UnicodeEncodeError:
         fallback = message.encode("ascii", "backslashreplace").decode("ascii")
         print(fallback)
+
+
+async def safe_answer_callback(query, *args, **kwargs) -> bool:
+    try:
+        await query.answer(*args, **kwargs)
+        return True
+    except BadRequest as e:
+        if "query is too old" in str(e).lower() or "query id is invalid" in str(e).lower():
+            return False
+        raise
 
 
 def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
@@ -2057,7 +2068,8 @@ async def templates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def choose_template_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
 
     templates = get_templates(context)
     template_id = q.data.split(":", 1)[1]
@@ -2167,7 +2179,8 @@ async def templates_cmd_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
     role = q.data.split(":", 1)[1]
     context.user_data.clear()
 
@@ -2203,10 +2216,11 @@ async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
 
     if context.user_data.get("role") != "admin":
-        await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
+        await safe_answer_callback(q, "هذه القائمة للمدير فقط.", show_alert=True)
         return
 
     templates = get_templates(context, force_reload=True)
@@ -2250,7 +2264,8 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def nav_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
     context.user_data.clear()
     await q.edit_message_text("تمت العودة للبداية.")
     await show_start_menu(q.message, context)
@@ -2258,17 +2273,18 @@ async def nav_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
 
     if context.user_data.get("role") != "admin":
-        await q.answer("هذه القائمة للمدير فقط.", show_alert=True)
+        await safe_answer_callback(q, "هذه القائمة للمدير فقط.", show_alert=True)
         return
 
     templates = get_templates(context, force_reload=True)
     callback_token = q.data.split(":", 1)[1]
     template_id = find_template_id_by_callback_token(templates, callback_token)
     if template_id not in templates:
-        await q.answer("القالب غير موجود", show_alert=True)
+        await safe_answer_callback(q, "القالب غير موجود", show_alert=True)
         return
 
     state = load_admin_state()
@@ -2288,7 +2304,8 @@ async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFA
 
 async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    if not await safe_answer_callback(q):
+        return
 
     templates = get_templates(context, force_reload=True)
     state = load_admin_state()
