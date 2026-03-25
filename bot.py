@@ -929,9 +929,18 @@ def find_linux_arabic_font() -> Optional[str]:
 def debug_log_arabic_render(stage: str, **data):
     try:
         safe = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in data.items())
-        print(f"[ArabicDebug] {stage} {safe}")
+        safe_log(f"[ArabicDebug] {stage} {safe}")
     except Exception:
         pass
+
+
+def safe_log(*parts):
+    message = " ".join(str(part) for part in parts)
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        fallback = message.encode("ascii", "backslashreplace").decode("ascii")
+        print(fallback)
 
 
 def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
@@ -1101,7 +1110,7 @@ def load_templates() -> dict:
             continue
         cfg, error = load_template_entry(folder)
         if error:
-            print(f"[Templates] skipping '{folder}': {error}")
+            safe_log(f"[Templates] skipping '{folder}': {error}")
             continue
         template_id = str(cfg.get("id") or folder)
         templates[template_id] = cfg
@@ -1114,12 +1123,12 @@ def load_templates() -> dict:
             continue
         cfg, error = load_loose_template_entry(cfg_path)
         if error:
-            print(f"[Templates] skipping loose config '{file_name}': {error}")
+            safe_log(f"[Templates] skipping loose config '{file_name}': {error}")
             continue
         template_id = str(cfg.get("id") or os.path.splitext(file_name)[0])
         templates[template_id] = cfg
 
-    print("[Templates] Loaded:", list(templates.keys()))
+    safe_log("[Templates] Loaded:", list(templates.keys()))
     return templates
 
 
