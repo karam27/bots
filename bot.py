@@ -222,6 +222,11 @@ def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
         "awaiting_new_template_name",
         "awaiting_new_template_image",
         "pending_template_name",
+        "awaiting_stat_number",
+        "awaiting_stat_word",
+        "awaiting_stat_body",
+        "pending_stat_number",
+        "pending_stat_word",
     }
     return {k: v for k, v in context.user_data.items() if k in keep_keys}
 
@@ -230,6 +235,27 @@ def reset_design_state(context: ContextTypes.DEFAULT_TYPE):
     session = preserve_session(context)
     context.user_data.clear()
     context.user_data.update(session)
+
+
+def clear_obsolete_auth_state(context: ContextTypes.DEFAULT_TYPE):
+    stale_keys = []
+    for key in list(context.user_data.keys()):
+        lowered = str(key).lower()
+        if any(token in lowered for token in ("password", "passcode", "login", "auth")):
+            stale_keys.append(key)
+    for key in stale_keys:
+        context.user_data.pop(key, None)
+
+
+def clear_stat_prompt_state(context: ContextTypes.DEFAULT_TYPE):
+    for key in (
+        "awaiting_stat_number",
+        "awaiting_stat_word",
+        "awaiting_stat_body",
+        "pending_stat_number",
+        "pending_stat_word",
+    ):
+        context.user_data.pop(key, None)
 
 
 def is_image_document(document) -> bool:
@@ -1225,6 +1251,7 @@ def draw_centered_text_block(
     max_lines: int = 2,
     reshape_enabled: bool = True,
     prefer_raqm: bool = True,
+    vertical_offset: int = 0,
 ):
     l, t, r, b = box
     box_w, box_h = r - l, b - t
@@ -1288,7 +1315,7 @@ def draw_centered_text_block(
         final_spacing = max(8, int(font_size * 0.10))
 
     total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
-    y = t + max(0, (box_h - total_h) // 2)
+    y = t + max(0, (box_h - total_h) // 2) + int(vertical_offset)
 
     for i, ln in enumerate(final_lines):
         rendered_text, draw_kwargs = get_text_render_parts(
@@ -1322,7 +1349,9 @@ def render_text_block_gdi(
     shadow_offset,
     max_font_size: int,
     min_font_size: int,
+    max_lines: int = 2,
     reshape_enabled: bool = True,
+    vertical_offset: int = 0,
 ) -> Optional[Image.Image]:
     if os.name != "nt":
         return None
@@ -1340,6 +1369,8 @@ def render_text_block_gdi(
         "height": int(box_h),
         "max_font_size": int(max_font_size),
         "min_font_size": int(min_font_size),
+        "max_lines": int(max_lines),
+        "vertical_offset": int(vertical_offset),
         "text_color": list(text_color),
         "shadow_color": list(shadow_color),
         "shadow_offset": list(shadow_offset),
@@ -1368,6 +1399,10 @@ $fmt = New-Object System.Drawing.StringFormat
 $fmt.Alignment = [System.Drawing.StringAlignment]::Center
 $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
 $fmt.FormatFlags = [System.Drawing.StringFormatFlags]::NoClip
+$singleLineFlags = [System.Drawing.StringFormatFlags]::NoWrap
+if ([int]$data.max_lines -le 1) {
+    $fmt.FormatFlags = $fmt.FormatFlags -bor $singleLineFlags
+}
 $rect = New-Object System.Drawing.RectangleF(0, 0, $data.width, $data.height)
 $font = $null
 for ($size = [int]$data.max_font_size; $size -ge [int]$data.min_font_size; $size -= 2) {
@@ -1380,7 +1415,8 @@ $shadowColor = [System.Drawing.Color]::FromArgb([int]$data.shadow_color[3], [int
 $textColor = [System.Drawing.Color]::FromArgb(255, [int]$data.text_color[0], [int]$data.text_color[1], [int]$data.text_color[2])
 $shadowBrush = New-Object System.Drawing.SolidBrush($shadowColor)
 $textBrush = New-Object System.Drawing.SolidBrush($textColor)
-$shadowRect = New-Object System.Drawing.RectangleF([single]$data.shadow_offset[0], [single]$data.shadow_offset[1], $data.width, $data.height)
+$shadowRect = New-Object System.Drawing.RectangleF([single]$data.shadow_offset[0], [single]($data.shadow_offset[1] + $data.vertical_offset), $data.width, $data.height)
+$rect = New-Object System.Drawing.RectangleF(0, [single]$data.vertical_offset, $data.width, $data.height)
 $g.DrawString([string]$data.text, $font, $shadowBrush, $shadowRect, $fmt)
 $g.DrawString([string]$data.text, $font, $textBrush, $rect, $fmt)
 $bmp.Save($data.out_path, [System.Drawing.Imaging.ImageFormat]::Png)
@@ -1416,6 +1452,33 @@ $bmp.Dispose()
                 os.remove(payload["out_path"])
         except OSError:
             pass
+
+
+def split_name_and_subtitle(text: str, template_cfg: dict) -> tuple[str, str]:
+    cleaned = clean_text_safe(text)
+    if not cleaned:
+        return "", ""
+    if not bool(template_cfg.get("name_subtitle_enabled", False)):
+        return cleaned, ""
+    separator = str(template_cfg.get("name_subtitle_separator", "|") or "|")
+    if separator and separator in cleaned:
+        name_text, subtitle_text = cleaned.split(separator, 1)
+        return clean_text_safe(name_text), clean_text_safe(subtitle_text)
+    auto_split_words = int(template_cfg.get("name_subtitle_auto_split_words", 0))
+    words = cleaned.split()
+    if auto_split_words > 0 and len(words) > auto_split_words:
+        name_text = " ".join(words[:auto_split_words])
+        subtitle_text = " ".join(words[auto_split_words:])
+        return clean_text_safe(name_text), clean_text_safe(subtitle_text)
+    return cleaned, ""
+
+
+def split_text_segments(text: str, separator: str = "|", max_parts: int = 3) -> list[str]:
+    cleaned = clean_text_safe(text)
+    if not cleaned:
+        return []
+    parts = [clean_text_safe(part) for part in cleaned.split(separator, max_parts - 1)]
+    return [part for part in parts if part]
 
 
 # ===================== Render =====================
@@ -1583,7 +1646,79 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             prefer_raqm=bool(template_cfg.get("brand_subtext_prefer_raqm", True)),
         )
 
+    if bool(template_cfg.get("stat_layout_enabled", False)):
+        stat_segments = split_text_segments(
+            text,
+            separator=str(template_cfg.get("stat_separator", "|") or "|"),
+            max_parts=3,
+        )
+        stat_number = stat_segments[0] if len(stat_segments) >= 1 else ""
+        stat_word = stat_segments[1] if len(stat_segments) >= 2 else ""
+        stat_body = stat_segments[2] if len(stat_segments) >= 3 else ""
+
+        if template_cfg.get("stat_number_box") and stat_number:
+            draw_centered_text_block(
+                draw=draw,
+                text=stat_number,
+                font_path=template_cfg.get("stat_number_font_bold_path", font_bold_path),
+                box=tuple(template_cfg["stat_number_box"]),
+                text_color=tuple(template_cfg.get("stat_number_text_color", [255, 220, 60])),
+                shadow_color=tuple(template_cfg.get("stat_number_shadow_color", [0, 0, 0, 120])),
+                shadow_offset=tuple(template_cfg.get("stat_number_shadow_offset", [2, 3])),
+                max_font_size=int(template_cfg.get("stat_number_max_font_size", 220)),
+                min_font_size=int(template_cfg.get("stat_number_min_font_size", 80)),
+                max_lines=1,
+                reshape_enabled=bool(template_cfg.get("stat_number_reshape_text", True)),
+                prefer_raqm=bool(template_cfg.get("stat_number_prefer_raqm", True)),
+                vertical_offset=int(template_cfg.get("stat_number_vertical_offset", 0)),
+            )
+
+        if template_cfg.get("stat_word_bg_box"):
+            draw_fill_box(
+                draw,
+                tuple(template_cfg["stat_word_bg_box"]),
+                tuple(template_cfg.get("stat_word_bg_fill", [24, 52, 80, 255])),
+                int(template_cfg.get("stat_word_bg_radius", 0)),
+            )
+
+        if template_cfg.get("stat_word_box") and stat_word:
+            draw_centered_text_block(
+                draw=draw,
+                text=stat_word,
+                font_path=template_cfg.get("stat_word_font_bold_path", font_bold_path),
+                box=tuple(template_cfg["stat_word_box"]),
+                text_color=tuple(template_cfg.get("stat_word_text_color", [255, 220, 60])),
+                shadow_color=tuple(template_cfg.get("stat_word_shadow_color", [0, 0, 0, 90])),
+                shadow_offset=tuple(template_cfg.get("stat_word_shadow_offset", [1, 2])),
+                max_font_size=int(template_cfg.get("stat_word_max_font_size", 62)),
+                min_font_size=int(template_cfg.get("stat_word_min_font_size", 24)),
+                max_lines=1,
+                reshape_enabled=bool(template_cfg.get("stat_word_reshape_text", True)),
+                prefer_raqm=bool(template_cfg.get("stat_word_prefer_raqm", True)),
+                vertical_offset=int(template_cfg.get("stat_word_vertical_offset", 0)),
+            )
+
+        if template_cfg.get("stat_body_box") and stat_body:
+            draw_centered_text_block(
+                draw=draw,
+                text=stat_body,
+                font_path=template_cfg.get("stat_body_font_bold_path", font_bold_path),
+                box=tuple(template_cfg["stat_body_box"]),
+                text_color=tuple(template_cfg.get("stat_body_text_color", [255, 255, 255])),
+                shadow_color=tuple(template_cfg.get("stat_body_shadow_color", [0, 0, 0, 140])),
+                shadow_offset=tuple(template_cfg.get("stat_body_shadow_offset", [2, 3])),
+                max_font_size=int(template_cfg.get("stat_body_max_font_size", 74)),
+                min_font_size=int(template_cfg.get("stat_body_min_font_size", 32)),
+                max_lines=int(template_cfg.get("stat_body_max_lines", 2)),
+                reshape_enabled=bool(template_cfg.get("stat_body_reshape_text", True)),
+                prefer_raqm=bool(template_cfg.get("stat_body_prefer_raqm", True)),
+                vertical_offset=int(template_cfg.get("stat_body_vertical_offset", 0)),
+            )
+
+        return canvas.convert("RGB")
+
     if template_cfg.get("name_box"):
+        primary_name_text, subtitle_text = split_name_and_subtitle(text, template_cfg)
         name_box = tuple(template_cfg["name_box"])
         name_font_path = template_cfg.get("name_font_bold_path", font_bold_path)
         name_render_engine = str(template_cfg.get("name_render_engine", "")).lower()
@@ -1591,7 +1726,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         name_prefer_raqm = bool(template_cfg.get("name_prefer_raqm", True))
         name_prefer_linux_system_font = bool(template_cfg.get("name_prefer_linux_system_font", False))
         using_linux_system_font = False
-        if _count_arabic_chars(text) > 0 and template_cfg.get("name_arabic_font_bold_path"):
+        if _count_arabic_chars(primary_name_text) > 0 and template_cfg.get("name_arabic_font_bold_path"):
             name_font_path = template_cfg.get("name_arabic_font_bold_path", name_font_path)
             name_render_engine = str(template_cfg.get("name_arabic_render_engine", name_render_engine)).lower()
             name_reshape_text = bool(template_cfg.get("name_arabic_reshape_text", name_reshape_text))
@@ -1620,13 +1755,13 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                         print(f"[Arabic] Linux fallback font not found, using template font: {fallback_font_path}")
                         name_font_path = fallback_font_path
         name_font_path = ensure_existing_path(name_font_path, font_bold_path)
-        if _count_arabic_chars(text) > 0:
+        if _count_arabic_chars(primary_name_text) > 0:
             debug_log_arabic_render(
                 "name_render",
                 template_id=template_cfg.get("id"),
                 platform=os.name,
                 raqm=PILLOW_HAS_RAQM,
-                text=text,
+                text=primary_name_text,
                 font_path=name_font_path,
                 font_exists=bool(name_font_path and os.path.isfile(name_font_path)),
                 render_engine=name_render_engine,
@@ -1641,10 +1776,11 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         name_max_font_size = int(template_cfg.get("name_max_font_size", 84))
         name_min_font_size = int(template_cfg.get("name_min_font_size", 40))
         name_max_lines = int(template_cfg.get("name_max_lines", 2))
+        name_vertical_offset = int(template_cfg.get("name_vertical_offset", 0))
 
         if name_render_engine == "gdi":
             rendered_name = render_text_block_gdi(
-                text=text,
+                text=primary_name_text,
                 font_path=name_font_path,
                 box=name_box,
                 text_color=name_text_color,
@@ -1652,14 +1788,16 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 shadow_offset=name_shadow_offset,
                 max_font_size=name_max_font_size,
                 min_font_size=name_min_font_size,
+                max_lines=name_max_lines,
                 reshape_enabled=name_reshape_text,
+                vertical_offset=name_vertical_offset,
             )
             if rendered_name is not None:
                 canvas.alpha_composite(rendered_name, (name_box[0], name_box[1]))
             else:
                 draw_centered_text_block(
                     draw=draw,
-                    text=text,
+                    text=primary_name_text,
                     font_path=name_font_path,
                     box=name_box,
                     text_color=name_text_color,
@@ -1670,11 +1808,12 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                     max_lines=name_max_lines,
                     reshape_enabled=name_reshape_text,
                     prefer_raqm=name_prefer_raqm,
+                    vertical_offset=name_vertical_offset,
                 )
         else:
             draw_centered_text_block(
                 draw=draw,
-                text=text,
+                text=primary_name_text,
                 font_path=name_font_path,
                 box=name_box,
                 text_color=name_text_color,
@@ -1685,6 +1824,37 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 max_lines=name_max_lines,
                 reshape_enabled=name_reshape_text,
                 prefer_raqm=name_prefer_raqm,
+                vertical_offset=name_vertical_offset,
+            )
+
+        if subtitle_text and template_cfg.get("name_subtitle_box"):
+            subtitle_box = tuple(template_cfg["name_subtitle_box"])
+            subtitle_font_path = ensure_existing_path(
+                template_cfg.get("name_subtitle_font_bold_path", name_font_path),
+                name_font_path,
+            )
+            subtitle_text_color = tuple(template_cfg.get("name_subtitle_text_color", name_text_color))
+            subtitle_shadow_color = tuple(template_cfg.get("name_subtitle_shadow_color", name_shadow_color))
+            subtitle_shadow_offset = tuple(template_cfg.get("name_subtitle_shadow_offset", name_shadow_offset))
+            subtitle_max_font_size = int(template_cfg.get("name_subtitle_max_font_size", 26))
+            subtitle_min_font_size = int(template_cfg.get("name_subtitle_min_font_size", 16))
+            subtitle_max_lines = int(template_cfg.get("name_subtitle_max_lines", 1))
+            subtitle_vertical_offset = int(template_cfg.get("name_subtitle_vertical_offset", 0))
+
+            draw_centered_text_block(
+                draw=draw,
+                text=subtitle_text,
+                font_path=subtitle_font_path,
+                box=subtitle_box,
+                text_color=subtitle_text_color,
+                shadow_color=subtitle_shadow_color,
+                shadow_offset=subtitle_shadow_offset,
+                max_font_size=subtitle_max_font_size,
+                min_font_size=subtitle_min_font_size,
+                max_lines=subtitle_max_lines,
+                reshape_enabled=bool(template_cfg.get("name_subtitle_reshape_text", True)),
+                prefer_raqm=bool(template_cfg.get("name_subtitle_prefer_raqm", True)),
+                vertical_offset=subtitle_vertical_offset,
             )
 
     if not bool(template_cfg.get("render_text", True)):
@@ -1976,6 +2146,7 @@ async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if role == "admin":
         context.user_data["role"] = "admin"
+        clear_obsolete_auth_state(context)
         templates = get_templates(context, force_reload=True)
         state = load_admin_state()
         await q.edit_message_text("تم تسجيلك كمدير.")
@@ -2028,6 +2199,8 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "add_template":
+        clear_obsolete_auth_state(context)
+        context.user_data.pop("awaiting_max_employees", None)
         context.user_data["awaiting_new_template_name"] = True
         context.user_data.pop("awaiting_new_template_image", None)
         context.user_data.pop("pending_template_name", None)
@@ -2035,6 +2208,10 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "max_employees":
+        clear_obsolete_auth_state(context)
+        context.user_data.pop("awaiting_new_template_name", None)
+        context.user_data.pop("awaiting_new_template_image", None)
+        context.user_data.pop("pending_template_name", None)
         context.user_data["awaiting_max_employees"] = True
         await q.edit_message_text("أرسل الآن عدد الموظفين المسموح به كرقم فقط.")
         return
@@ -2174,6 +2351,13 @@ async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
     template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
 
+    if bool(template_cfg.get("stat_layout_enabled", False)):
+        clear_stat_prompt_state(context)
+        context.user_data["news_img"] = img
+        context.user_data["awaiting_stat_number"] = True
+        await update.message.reply_text("أرسل الآن الرقم الذي سيظهر داخل الصندوق الأصفر.")
+        return
+
     if bool(template_cfg.get("requires_name", False)):
         context.user_data["news_img"] = img
         after_photo_prompt = str(
@@ -2261,6 +2445,13 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
     available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
     template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
 
+    if bool(template_cfg.get("stat_layout_enabled", False)):
+        clear_stat_prompt_state(context)
+        context.user_data["news_img"] = img
+        context.user_data["awaiting_stat_number"] = True
+        await update.message.reply_text("أرسل الآن الرقم الذي سيظهر داخل الصندوق الأصفر.")
+        return
+
     if bool(template_cfg.get("requires_name", False)):
         context.user_data["news_img"] = img
         after_photo_prompt = str(
@@ -2282,6 +2473,8 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    clear_obsolete_auth_state(context)
+
     if context.user_data.get("awaiting_new_template_name"):
         if context.user_data.get("role") != "admin":
             reset_design_state(context)
@@ -2323,6 +2516,64 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_status_text(state, templates),
             reply_markup=admin_menu_keyboard(),
         )
+        return
+
+    if context.user_data.get("awaiting_stat_number"):
+        value = clean_text_safe(update.message.text) or update.message.text.strip()
+        if not value:
+            await update.message.reply_text("أرسل الرقم فقط.")
+            return
+        context.user_data["pending_stat_number"] = value
+        context.user_data.pop("awaiting_stat_number", None)
+        context.user_data["awaiting_stat_word"] = True
+        await update.message.reply_text("أرسل الآن الكلمة التي ستظهر داخل الصندوق الأزرق.")
+        return
+
+    if context.user_data.get("awaiting_stat_word"):
+        value = clean_text_safe(update.message.text) or update.message.text.strip()
+        if not value:
+            await update.message.reply_text("أرسل الكلمة فقط.")
+            return
+        context.user_data["pending_stat_word"] = value
+        context.user_data.pop("awaiting_stat_word", None)
+        context.user_data["awaiting_stat_body"] = True
+        await update.message.reply_text("أرسل الآن الجملة التي ستظهر باللون الأبيض تحت.")
+        return
+
+    if context.user_data.get("awaiting_stat_body"):
+        if "news_img" not in context.user_data:
+            clear_stat_prompt_state(context)
+            await update.message.reply_text("أرسل الصورة من جديد أولاً.")
+            return
+        if "template_id" not in context.user_data:
+            clear_stat_prompt_state(context)
+            await update.message.reply_text("اختر القالب أولاً من /start أو /templates.")
+            return
+
+        body = clean_text_safe(update.message.text) or update.message.text.strip()
+        if not body:
+            await update.message.reply_text("أرسل الجملة فقط.")
+            return
+
+        templates = get_templates(context)
+        state = load_admin_state()
+        available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+        template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
+        img = context.user_data["news_img"]
+        stat_text = " | ".join(
+            [
+                str(context.user_data.get("pending_stat_number", "")).strip(),
+                str(context.user_data.get("pending_stat_word", "")).strip(),
+                body.strip(),
+            ]
+        )
+        try:
+            await send_rendered_post(update, context, template_cfg, img, stat_text)
+        except Exception as e:
+            await update.message.reply_text(f"صار خطأ أثناء التصميم: {e}")
+            reset_design_state(context)
+        finally:
+            clear_stat_prompt_state(context)
         return
 
     if "news_img" not in context.user_data:
