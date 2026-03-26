@@ -10,7 +10,7 @@
   "font_bold_path": "templates/breaking/HEADLINERBOLD.otf",
   "image_mode": "full",
   "image_area_bottom": 1140,
-  "text_box": [130, 1180, 1500, 1940],
+  "text_box": [70, 1180, 1562, 1940],
   "template_cutouts": [
     {
       "shape": "rectangle",
@@ -24,23 +24,23 @@
       "box": [1098, 18, 1588, 192]
     }
   ],
-  "max_font_size": 118,
-  "min_font_size": 60,
+  "max_font_size": 110,
+  "min_font_size": 58,
   "text_color": [255, 255, 255],
-  "shadow_color": [0, 0, 0, 150],
+  "shadow_color": [0, 0, 0, 140],
   "shadow_offset": [2, 3],
-  "top_bias": 0.2,
+  "top_bias": 0.35,
   "text_align": "center",
   "short_text_align": "center",
-  "text_padding_x": 150,
-  "text_padding_y": 44,
-  "line_spacing_factor": 0.12,
-  "short_line_spacing_factor": 0.04,
+  "text_padding_x": 90,
+  "text_padding_y": 40,
+  "line_spacing_factor": 0.19,
+  "short_line_spacing_factor": 0.18,
   "max_lines": 4,
-  "short_words_threshold": 10,
-  "stretch_short_text": false,
-  "stretch_long_text": false,
+  "short_words_threshold": 6,
+  "stretch_short_text": true,
+  "stretch_long_text": true,
   "short_centered_layout": true,
-  "short_center_offset": -80,
-  "short_fill_ratio": 0.26
+  "short_center_offset": -120,
+  "short_fill_ratio": 0.60
 }

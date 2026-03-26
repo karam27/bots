@@ -2006,6 +2006,8 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
 
     short_centered_layout = bool(template_cfg.get("short_centered_layout", True))
     short_center_offset = int(template_cfg.get("short_center_offset", -70))
+    long_centered_layout = bool(template_cfg.get("long_centered_layout", False))
+    long_center_offset = int(template_cfg.get("long_center_offset", 0))
 
     if short_style_mode and short_centered_layout:
         if len(final_lines) > 1:
@@ -2015,6 +2017,14 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             final_spacing = max(final_spacing, desired_spacing)
         total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
         y = t + max(0, (box_h - total_h) // 2) + short_center_offset
+    elif not short_style_mode and long_centered_layout:
+        if len(final_lines) > 1:
+            long_fill_ratio = float(template_cfg.get("long_fill_ratio", 0.52))
+            target_total_h = int(box_h * long_fill_ratio)
+            desired_spacing = target_total_h - sum(final_heights)
+            final_spacing = max(final_spacing, desired_spacing)
+        total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
+        y = t + max(0, (box_h - total_h) // 2) + long_center_offset
     else:
         y = t + top_start_offset
 

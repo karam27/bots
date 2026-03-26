@@ -10,7 +10,7 @@
   "font_bold_path": "templates/classic/HEADLINERBOLD.otf",
   "image_mode": "full",
   "image_area_bottom": 1210,
-  "text_box": [110, 1260, 1520, 1850],
+  "text_box": [70, 1235, 1562, 1878],
   "template_cutouts": [
     {
       "shape": "rectangle",
@@ -24,23 +24,26 @@
       "box": [1188, 34, 1592, 181]
     }
   ],
-  "max_font_size": 108,
-  "min_font_size": 54,
+  "max_font_size": 110,
+  "min_font_size": 58,
   "text_color": [255, 255, 255],
-  "shadow_color": [0, 0, 0, 150],
+  "shadow_color": [0, 0, 0, 140],
   "shadow_offset": [2, 3],
-  "top_bias": 0.24,
+  "top_bias": 0.35,
   "text_align": "center",
   "short_text_align": "center",
   "text_padding_x": 90,
-  "text_padding_y": 34,
-  "line_spacing_factor": 0.12,
-  "short_line_spacing_factor": 0.04,
+  "text_padding_y": 40,
+  "line_spacing_factor": 0.24,
+  "short_line_spacing_factor": 0.18,
   "max_lines": 4,
-  "short_words_threshold": 10,
-  "stretch_short_text": false,
-  "stretch_long_text": false,
+  "short_words_threshold": 6,
+  "stretch_short_text": true,
+  "stretch_long_text": true,
   "short_centered_layout": true,
-  "short_center_offset": -70,
-  "short_fill_ratio": 0.28
+  "short_center_offset": -120,
+  "short_fill_ratio": 0.60,
+  "long_centered_layout": false,
+  "long_center_offset": 0,
+  "long_fill_ratio": 0.52
 }
