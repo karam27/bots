@@ -1,5 +1,6 @@
 {
-  "name": "قالب الصور",
+  "id": "photo_text_bottom",
+  "name": "قالب الصور | نص تحت الصورة",
   "enabled": true,
   "requires_name": false,
   "requires_text": true,

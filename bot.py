@@ -1906,6 +1906,21 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         return canvas.convert("RGB")
 
     text_box = tuple(template_cfg["text_box"])
+    if template_cfg.get("text_bg_box"):
+        draw_fill_box(
+            draw,
+            tuple(template_cfg["text_bg_box"]),
+            tuple(template_cfg.get("text_bg_fill", [0, 0, 0, 140])),
+            int(template_cfg.get("text_bg_radius", 0)),
+        )
+    elif bool(template_cfg.get("text_bg_use_text_box", False)):
+        draw_fill_box(
+            draw,
+            text_box,
+            tuple(template_cfg.get("text_bg_fill", [0, 0, 0, 140])),
+            int(template_cfg.get("text_bg_radius", 0)),
+        )
+
     l, t, r, b = text_box
     pad_x = int(template_cfg.get("text_padding_x", 40))
     pad_y = int(template_cfg.get("text_padding_y", 20))

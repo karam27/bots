@@ -1,0 +1,60 @@
+{
+  "id": "photo_text_overlay",
+  "name": "قالب الصور | نص على الصورة",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
+  "template_path": "templates/قالب الصور/قالب الصور.jpeg",
+  "font_bold_path": "templates/قالب الصور/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 1268,
+  "template_cutouts": [
+    {
+      "shape": "rectangle",
+      "box": [0, 0, 1080, 1268]
+    }
+  ],
+  "template_overlay_boxes": [
+    [0, 1210, 1080, 1350]
+  ],
+  "image_overlays": [
+    {
+      "path": "templates/قالب الصور/logo.png",
+      "box": [350, 24, 730, 160]
+    }
+  ],
+  "text_box": [
+    90,
+    610,
+    990,
+    930
+  ],
+  "max_font_size": 86,
+  "min_font_size": 42,
+  "text_color": [
+    255,
+    255,
+    255
+  ],
+  "shadow_color": [0, 0, 0, 175],
+  "shadow_offset": [
+    2,
+    3
+  ],
+  "top_bias": 0.28,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 58,
+  "text_padding_y": 24,
+  "line_spacing_factor": 0.20,
+  "short_line_spacing_factor": 0.16,
+  "max_lines": 4,
+  "short_words_threshold": 7,
+  "short_centered_layout": true,
+  "short_center_offset": -80,
+  "short_fill_ratio": 0.58,
+  "stretch_short_text": false,
+  "stretch_long_text": false
+}
