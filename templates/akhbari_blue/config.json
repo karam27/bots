@@ -38,12 +38,14 @@
   "short_line_spacing_factor": 0.18,
   "max_lines": 4,
   "short_words_threshold": 6,
-  "stretch_short_text": true,
-  "stretch_long_text": true,
+  "stretch_short_text": false,
+  "stretch_long_text": false,
   "short_centered_layout": true,
-  "short_center_offset": -120,
+  "short_center_offset": 0,
   "short_fill_ratio": 0.60,
-  "long_centered_layout": false,
+  "compact_short_text": true,
+  "short_max_fill_ratio": 0.28,
+  "long_centered_layout": true,
   "long_center_offset": 0,
   "long_fill_ratio": 0.52
 }

@@ -540,6 +540,49 @@ def text_bbox(
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
+def text_bbox_with_offsets(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    reshape_enabled: bool = True,
+    prefer_raqm: bool = True,
+):
+    rendered_text, draw_kwargs = get_text_render_parts(
+        text,
+        reshape_enabled=reshape_enabled,
+        prefer_raqm=prefer_raqm,
+    )
+    return draw.textbbox((0, 0), rendered_text, font=font, **draw_kwargs)
+
+
+def resolve_text_x_in_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    box_left: int,
+    box_right: int,
+    align: str = "center",
+    reshape_enabled: bool = True,
+    prefer_raqm: bool = True,
+) -> float:
+    bbox = text_bbox_with_offsets(
+        draw,
+        text,
+        font,
+        reshape_enabled=reshape_enabled,
+        prefer_raqm=prefer_raqm,
+    )
+    text_left, text_right = bbox[0], bbox[2]
+    text_width = text_right - text_left
+    box_width = box_right - box_left
+
+    if align == "right":
+        return box_right - text_right
+    if align == "left":
+        return box_left - text_left
+    return box_left + ((box_width - text_width) / 2) - text_left
+
+
 # ===================== Image fit =====================
 def fit_image_to_box(
     img: Image.Image,
@@ -705,6 +748,55 @@ def autocrop_transparent(img: Image.Image, padding: int = 8) -> Image.Image:
     b = min(img.height, b + padding)
 
     return img.crop((l, t, r, b))
+
+
+def trim_bottom_white_band(
+    img: Image.Image,
+    threshold: int = 245,
+    row_white_ratio: float = 0.90,
+    start_scan_ratio: float = 0.35,
+    min_run_rows: int = 36,
+    window_rows: int = 48,
+    window_match_ratio: float = 0.80,
+    bottom_padding: int = 8,
+) -> Image.Image:
+    img = img.convert("RGBA")
+    w, h = img.size
+    if w <= 1 or h <= 1:
+        return img
+
+    pixels = img.load()
+    start_y = max(0, min(h - 1, int(h * start_scan_ratio)))
+    qualifying_rows = []
+
+    for y in range(start_y, h):
+        white_count = 0
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            if a == 0 or (r >= threshold and g >= threshold and b >= threshold):
+                white_count += 1
+        qualifying_rows.append(1 if (white_count / max(1, w)) >= row_white_ratio else 0)
+
+    window_rows = max(1, int(window_rows))
+    min_matches = max(1, int(window_rows * window_match_ratio))
+    min_run_rows = max(min_run_rows, window_rows)
+
+    for idx in range(0, max(0, len(qualifying_rows) - window_rows + 1)):
+        if sum(qualifying_rows[idx:idx + window_rows]) < min_matches:
+            continue
+
+        run_end = idx + window_rows
+        while run_end < len(qualifying_rows) and qualifying_rows[run_end]:
+            run_end += 1
+
+        if (run_end - idx) < min_run_rows:
+            continue
+
+        crop_bottom = max(1, min(h, start_y + idx + bottom_padding))
+        if crop_bottom >= int(h * 0.35):
+            return img.crop((0, 0, w, crop_bottom))
+
+    return img
 
 
 # ===================== Line breaking =====================
@@ -1343,8 +1435,16 @@ def draw_centered_text_block(
             reshape_enabled=reshape_enabled,
             prefer_raqm=prefer_raqm,
         )
-        wpx = draw.textlength(rendered_text, font=font, **draw_kwargs)
-        x = l + (box_w - wpx) / 2
+        x = resolve_text_x_in_box(
+            draw,
+            ln,
+            font,
+            l,
+            r,
+            align="center",
+            reshape_enabled=reshape_enabled,
+            prefer_raqm=prefer_raqm,
+        )
         sx, sy = shadow_offset
         draw.text((x + sx, y + sy), rendered_text, font=font, fill=shadow_color, **draw_kwargs)
         draw.text((x, y), rendered_text, font=font, fill=text_color, **draw_kwargs)
@@ -1552,6 +1652,18 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         news_img = autocrop_transparent(
             news_img,
             padding=int(template_cfg.get("transparent_crop_padding", 8)),
+        )
+
+    if bool(template_cfg.get("trim_bottom_white_band", False)):
+        news_img = trim_bottom_white_band(
+            news_img,
+            threshold=int(template_cfg.get("trim_bottom_white_threshold", 245)),
+            row_white_ratio=float(template_cfg.get("trim_bottom_white_ratio", 0.90)),
+            start_scan_ratio=float(template_cfg.get("trim_bottom_white_start_ratio", 0.35)),
+            min_run_rows=int(template_cfg.get("trim_bottom_white_min_run_rows", 36)),
+            window_rows=int(template_cfg.get("trim_bottom_white_window_rows", 48)),
+            window_match_ratio=float(template_cfg.get("trim_bottom_white_window_ratio", 0.80)),
+            bottom_padding=int(template_cfg.get("trim_bottom_white_padding", 8)),
         )
 
     image_mode = template_cfg.get("image_mode", "full")
@@ -1988,12 +2100,17 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         if short_style_mode:
             spacing_factor = float(template_cfg.get("short_line_spacing_factor", 0.18))
 
+        line_height_factor = float(template_cfg.get("line_height_factor", 1.0))
+        if short_style_mode:
+            line_height_factor = float(template_cfg.get("short_line_height_factor", line_height_factor))
+        effective_heights = [max(1, int(h * line_height_factor)) for h in heights]
+
         spacing = int(font_size * spacing_factor)
-        total_h = sum(heights) + spacing * (len(lines) - 1)
+        total_h = sum(effective_heights) + spacing * (len(lines) - 1)
 
         if (max(widths) if widths else 0) <= box_w and total_h <= box_h:
             final_lines = lines
-            final_heights = heights
+            final_heights = effective_heights
             final_spacing = spacing
             break
 
@@ -2007,10 +2124,16 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         else:
             final_lines = break_lines_ar_balanced(draw, text, font, box_w, max_lines=max_lines)
 
-        final_heights = [text_bbox(draw, ln, font)[1] for ln in final_lines]
         spacing_factor = float(template_cfg.get("line_spacing_factor", 0.24))
         if short_style_mode:
             spacing_factor = float(template_cfg.get("short_line_spacing_factor", 0.18))
+        line_height_factor = float(template_cfg.get("line_height_factor", 1.0))
+        if short_style_mode:
+            line_height_factor = float(template_cfg.get("short_line_height_factor", line_height_factor))
+        final_heights = [
+            max(1, int(text_bbox(draw, ln, font)[1] * line_height_factor))
+            for ln in final_lines
+        ]
         final_spacing = int(font_size * spacing_factor)
 
     font = ImageFont.truetype(font_bold_path, font_size)
@@ -2018,6 +2141,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     top_start_offset = int(template_cfg.get("top_start_offset", -35))
     stretch_long_text = bool(template_cfg.get("stretch_long_text", True))
     stretch_short_text = bool(template_cfg.get("stretch_short_text", True))
+    compact_short_text = bool(template_cfg.get("compact_short_text", False))
 
     short_centered_layout = bool(template_cfg.get("short_centered_layout", True))
     short_center_offset = int(template_cfg.get("short_center_offset", -70))
@@ -2025,7 +2149,14 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     long_center_offset = int(template_cfg.get("long_center_offset", 0))
 
     if short_style_mode and short_centered_layout:
-        if len(final_lines) > 1:
+        if compact_short_text and len(final_lines) > 1:
+            short_max_fill_ratio = float(template_cfg.get("short_max_fill_ratio", 0.34))
+            max_total_h = int(box_h * short_max_fill_ratio)
+            if max_total_h > 0:
+                available_spacing = max_total_h - sum(final_heights)
+                max_spacing = max(0, available_spacing // (len(final_lines) - 1))
+                final_spacing = min(final_spacing, max_spacing)
+        elif len(final_lines) > 1:
             short_fill_ratio = float(template_cfg.get("short_fill_ratio", 0.86))
             target_total_h = int(box_h * short_fill_ratio)
             desired_spacing = target_total_h - sum(final_heights)
@@ -2043,7 +2174,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     else:
         y = t + top_start_offset
 
-    if stretch_short_text and len(final_lines) > 1 and short_style_mode:
+    if stretch_short_text and not compact_short_text and len(final_lines) > 1 and short_style_mode:
         available_spacing = box_h - sum(final_heights)
         if available_spacing > 0:
             final_spacing = max(final_spacing, available_spacing // (len(final_lines) - 1))
@@ -2055,14 +2186,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
 
     for i, ln in enumerate(final_lines):
         rendered_text, draw_kwargs = get_text_render_parts(ln)
-        wpx = draw.textlength(rendered_text, font=font, **draw_kwargs)
-
-        if text_align == "right":
-            x = r - wpx
-        elif text_align == "left":
-            x = l
-        else:
-            x = l + (box_w - wpx) / 2
+        x = resolve_text_x_in_box(draw, ln, font, l, r, align=text_align)
 
         sx, sy = shadow_offset
         draw.text((x + sx, y + sy), rendered_text, font=font, fill=shadow_color, **draw_kwargs)

@@ -9,15 +9,15 @@
   "template_path": "templates/قالب الصور/قالب الصور.jpeg",
   "font_bold_path": "templates/قالب الصور/HEADLINERBOLD.otf",
   "image_mode": "full",
-  "image_area_bottom": 1268,
+  "image_area_bottom": 1320,
   "template_cutouts": [
     {
       "shape": "rectangle",
-      "box": [0, 0, 1080, 1268]
+      "box": [0, 0, 1080, 1320]
     }
   ],
   "template_overlay_boxes": [
-    [0, 1210, 1080, 1350]
+    [0, 1318, 1080, 1350]
   ],
   "image_overlays": [
     {
@@ -25,12 +25,21 @@
       "box": [350, 24, 730, 160]
     }
   ],
+  "trim_bottom_white_band": true,
+  "trim_bottom_white_threshold": 244,
+  "trim_bottom_white_ratio": 0.82,
+  "trim_bottom_white_start_ratio": 0.38,
+  "trim_bottom_white_min_run_rows": 40,
+  "trim_bottom_white_window_rows": 54,
+  "trim_bottom_white_window_ratio": 0.72,
+  "trim_bottom_white_padding": 0,
   "text_box": [
     90,
-    610,
+    1080,
     990,
-    930
+    1298
   ],
+  "top_start_offset": 0,
   "max_font_size": 86,
   "min_font_size": 42,
   "text_color": [
@@ -53,7 +62,7 @@
   "max_lines": 4,
   "short_words_threshold": 7,
   "short_centered_layout": true,
-  "short_center_offset": -80,
+  "short_center_offset": 0,
   "short_fill_ratio": 0.58,
   "stretch_short_text": false,
   "stretch_long_text": false
