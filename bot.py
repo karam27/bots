@@ -554,26 +554,106 @@ def normalize_ai_text_boxes(candidate_boxes, width: int, height: int, max_font_s
     return normalized_boxes
 
 
-def analyze_template_text_boxes_with_openai(
+def normalize_ai_image_layout(candidate_layout: dict, width: int, height: int) -> dict:
+    image_area_bottom = int(height * 0.64)
+    fallback_layout = {
+        "image_mode": "full",
+        "image_area_bottom": image_area_bottom,
+        "template_cutouts": [],
+    }
+    if not isinstance(candidate_layout, dict):
+        return fallback_layout
+
+    mode = str(candidate_layout.get("mode", "full") or "full").strip().lower()
+    if mode == "box":
+        raw_box = candidate_layout.get("box")
+        if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+            return fallback_layout
+        try:
+            l, t, r, b = [int(float(v)) for v in raw_box]
+        except Exception:
+            return fallback_layout
+
+        l = max(0, min(width - 2, l))
+        t = max(0, min(height - 2, t))
+        r = max(l + 2, min(width, r))
+        b = max(t + 2, min(height, b))
+        if (r - l) < 80 or (b - t) < 80:
+            return fallback_layout
+
+        raw_shape = str(candidate_layout.get("mask_shape", "rectangle") or "rectangle").lower()
+        if raw_shape == "circle":
+            mask_shape = "ellipse"
+        else:
+            mask_shape = "rectangle"
+
+        return {
+            "image_mode": "box",
+            "image_box": [l, t, r, b],
+            "image_mask_box": [l, t, r, b],
+            "image_mask_shape": mask_shape,
+            "template_cutouts": [{"shape": "rectangle", "box": [l, t, r, b]}],
+        }
+
+    bottom = int(candidate_layout.get("image_area_bottom", image_area_bottom) or image_area_bottom)
+    bottom = max(int(height * 0.20), min(height, bottom))
+    return {
+        "image_mode": "full",
+        "image_area_bottom": bottom,
+        "template_cutouts": [{"shape": "rectangle", "box": [0, 0, width, bottom]}],
+    }
+
+
+def infer_image_layout_from_text_boxes(text_boxes: list[dict], width: int, height: int) -> dict:
+    if not isinstance(text_boxes, list) or not text_boxes:
+        return normalize_ai_image_layout({}, width, height)
+
+    top_edges = []
+    for box_cfg in text_boxes:
+        if not isinstance(box_cfg, dict):
+            continue
+        raw_box = box_cfg.get("box")
+        if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+            continue
+        try:
+            top_edges.append(int(raw_box[1]))
+        except Exception:
+            continue
+
+    if not top_edges:
+        return normalize_ai_image_layout({}, width, height)
+
+    first_text_top = min(top_edges)
+    inferred_bottom = max(int(height * 0.20), min(int(height * 0.82), first_text_top - max(12, int(height * 0.015))))
+    return {
+        "image_mode": "full",
+        "image_area_bottom": inferred_bottom,
+        "template_cutouts": [{"shape": "rectangle", "box": [0, 0, width, inferred_bottom]}],
+    }
+
+
+def analyze_template_layout_with_openai(
     source_bytes: bytes,
     width: int,
     height: int,
     max_font_size: int,
     min_font_size: int,
-) -> tuple[Optional[list[dict]], Optional[dict], Optional[str]]:
+) -> tuple[Optional[dict], Optional[str]]:
     if not OPENAI_API_KEY:
-        return None, None, "OPENAI_API_KEY missing"
+        return None, "OPENAI_API_KEY missing"
 
     image_b64 = base64.b64encode(source_bytes).decode("ascii")
     prompt = (
-        "Analyze this social media news template image and propose JSON text boxes for Arabic headline rendering. "
-        "Return only JSON with keys: summary, text_box_separator, text_boxes. "
+        "Analyze this social media news template image and propose a complete render layout for a Telegram news bot. "
+        "Return only JSON with keys: summary, text_box_separator, image_layout, text_boxes. "
         "Assume the editor will send text as 'headline | subtitle'. "
+        "Decide where the user photo should go and where the headline/subtitle should go. "
         "Use one title box and optionally one subtitle box only if the design clearly supports it. "
         f"Image size is {width}x{height}. "
+        "For image_layout use either mode=full with image_area_bottom, or mode=box with box=[x1,y1,x2,y2]. "
         "Each text_boxes item must include: id, source, box, padding_x, padding_y, text_align, vertical_align, "
         "max_font_size, min_font_size, max_lines, line_spacing_factor, line_height_factor, prefer_balanced_lines, prefer_single_line. "
-        "Keep boxes inside visible safe areas, avoid logos, avoid image focal areas when obvious, and preserve brand layout."
+        "Keep boxes inside visible safe areas, avoid logos, avoid decorative overlays, and preserve brand layout."
     )
 
     payload = {
@@ -590,13 +670,29 @@ def analyze_template_text_boxes_with_openai(
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "template_text_boxes",
+                "name": "template_layout",
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
                         "summary": {"type": "string"},
                         "text_box_separator": {"type": "string"},
+                        "image_layout": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "mode": {"type": "string", "enum": ["full", "box"]},
+                                "image_area_bottom": {"type": "integer"},
+                                "box": {
+                                    "type": "array",
+                                    "items": {"type": "integer"},
+                                    "minItems": 4,
+                                    "maxItems": 4,
+                                },
+                                "mask_shape": {"type": "string", "enum": ["rectangle", "circle"]},
+                            },
+                            "required": ["mode"],
+                        },
                         "text_boxes": {
                             "type": "array",
                             "items": {
@@ -652,7 +748,7 @@ def analyze_template_text_boxes_with_openai(
                             },
                         },
                     },
-                    "required": ["summary", "text_box_separator", "text_boxes"],
+                    "required": ["summary", "text_box_separator", "image_layout", "text_boxes"],
                 },
             }
         },
@@ -676,18 +772,18 @@ def analyze_template_text_boxes_with_openai(
             body = e.read().decode("utf-8", errors="ignore")
         except Exception:
             body = str(e)
-        return None, None, f"OpenAI HTTP {e.code}: {body[:400]}"
+        return None, f"OpenAI HTTP {e.code}: {body[:400]}"
     except Exception as e:
-        return None, None, f"OpenAI request failed: {e}"
+        return None, f"OpenAI request failed: {e}"
 
     output_text = extract_openai_output_text(response_data)
     if not output_text:
-        return None, response_data, "OpenAI returned no output text"
+        return None, "OpenAI returned no output text"
 
     try:
         ai_json = json.loads(output_text)
     except Exception as e:
-        return None, response_data, f"OpenAI returned invalid JSON: {e}"
+        return None, f"OpenAI returned invalid JSON: {e}"
 
     separator = str(ai_json.get("text_box_separator", "|") or "|")
     normalized_boxes = normalize_ai_text_boxes(
@@ -697,12 +793,20 @@ def analyze_template_text_boxes_with_openai(
         max_font_size=max_font_size,
         min_font_size=min_font_size,
     )
-    metadata = {
+    normalized_image_layout = normalize_ai_image_layout(ai_json.get("image_layout"), width=width, height=height)
+    if normalized_image_layout.get("image_mode") == "full":
+        inferred_layout = infer_image_layout_from_text_boxes(normalized_boxes, width=width, height=height)
+        ai_bottom = int(normalized_image_layout.get("image_area_bottom", int(height * 0.64)))
+        inferred_bottom = int(inferred_layout.get("image_area_bottom", ai_bottom))
+        normalized_image_layout["image_area_bottom"] = max(ai_bottom, inferred_bottom)
+        normalized_image_layout["template_cutouts"] = [{"shape": "rectangle", "box": [0, 0, width, normalized_image_layout["image_area_bottom"]]}]
+    return {
         "summary": str(ai_json.get("summary", "") or "").strip(),
         "separator": separator,
         "model": OPENAI_TEMPLATE_MODEL,
-    }
-    return normalized_boxes, metadata, None
+        "text_boxes": normalized_boxes,
+        "image_layout": normalized_image_layout,
+    }, None
 
 
 def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
@@ -722,23 +826,37 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
     attach_template_font(folder_path)
 
     config = build_default_template_config(template_name, folder_name, width, height)
-    ai_text_boxes, ai_metadata, ai_error = analyze_template_text_boxes_with_openai(
+    ai_layout, ai_error = analyze_template_layout_with_openai(
         source_bytes=source_bytes,
         width=width,
         height=height,
         max_font_size=int(config.get("max_font_size", 120)),
         min_font_size=int(config.get("min_font_size", 28)),
     )
-    if ai_text_boxes:
-        config["text_boxes"] = ai_text_boxes
-        config["text_box_separator"] = str(ai_metadata.get("separator", "|") if ai_metadata else "|")
-        config["text_boxes_ai"] = {
+    if ai_layout:
+        config["text_boxes"] = ai_layout.get("text_boxes", config.get("text_boxes", []))
+        config["text_box_separator"] = str(ai_layout.get("separator", "|") or "|")
+        image_layout = ai_layout.get("image_layout", {})
+        if image_layout.get("image_mode") == "box":
+            config["image_mode"] = "box"
+            config["image_box"] = image_layout.get("image_box", config.get("image_box"))
+            config["image_mask_box"] = image_layout.get("image_mask_box", config.get("image_mask_box", config.get("image_box")))
+            config["image_mask_shape"] = image_layout.get("image_mask_shape", "rectangle")
+            config["template_cutouts"] = image_layout.get("template_cutouts", [])
+        else:
+            config["image_mode"] = "full"
+            config["image_area_bottom"] = int(image_layout.get("image_area_bottom", config.get("image_area_bottom", int(height * 0.64))))
+            config["template_cutouts"] = image_layout.get("template_cutouts", [])
+            config.pop("image_box", None)
+            config.pop("image_mask_box", None)
+            config.pop("image_mask_shape", None)
+        config["layout_ai"] = {
             "enabled": True,
-            "model": str(ai_metadata.get("model", OPENAI_TEMPLATE_MODEL) if ai_metadata else OPENAI_TEMPLATE_MODEL),
-            "summary": str(ai_metadata.get("summary", "") if ai_metadata else ""),
+            "model": str(ai_layout.get("model", OPENAI_TEMPLATE_MODEL) or OPENAI_TEMPLATE_MODEL),
+            "summary": str(ai_layout.get("summary", "") or ""),
         }
     else:
-        config["text_boxes_ai"] = {
+        config["layout_ai"] = {
             "enabled": False,
             "model": OPENAI_TEMPLATE_MODEL,
             "error": str(ai_error or "fallback_to_default"),
