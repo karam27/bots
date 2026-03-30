@@ -6,6 +6,9 @@ import subprocess
 import tempfile
 import hashlib
 import shutil
+import base64
+import urllib.request
+import urllib.error
 from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
@@ -41,6 +44,8 @@ DEFAULT_TEMPLATE_ID = "classic"
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_TEMPLATE_MODEL = os.getenv("OPENAI_TEMPLATE_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
 
 
 # ===================== Admin / Employee State =====================
@@ -342,6 +347,9 @@ def build_default_template_config(template_name: str, folder_name: str, width: i
         "short_centered_layout": True,
         "short_center_offset": 0,
         "short_fill_ratio": 0.65,
+        "text_layout_engine": "smart_boxes",
+        "text_box_separator": "|",
+        "text_boxes": build_default_smart_text_boxes(width, height, max_font_size, min_font_size),
     }
 
 
@@ -351,6 +359,295 @@ def build_default_text_box(width: int, height: int) -> List[int]:
     text_top = max(0, int(height * 0.68))
     text_bottom = min(height - 20, int(height * 0.94))
     return [text_left, text_top, text_right, text_bottom]
+
+
+def build_default_smart_text_boxes(width: int, height: int, max_font_size: int, min_font_size: int) -> list[dict]:
+    text_left = max(40, int(width * 0.06))
+    text_right = min(width - 40, int(width * 0.94))
+    text_top = max(0, int(height * 0.68))
+    text_bottom = min(height - 20, int(height * 0.94))
+    text_height = max(40, text_bottom - text_top)
+    title_bottom = text_top + int(text_height * 0.66)
+    subtitle_top = title_bottom + max(10, int(height * 0.01))
+    return [
+        {
+            "id": "title",
+            "enabled": True,
+            "source": "headline_or_full",
+            "box": [text_left, text_top, text_right, title_bottom],
+            "padding_x": max(30, int(width * 0.04)),
+            "padding_y": max(12, int(height * 0.01)),
+            "text_align": "center",
+            "vertical_align": "center",
+            "max_font_size": max_font_size,
+            "min_font_size": min_font_size,
+            "max_lines": 4,
+            "line_spacing_factor": 0.10,
+            "line_height_factor": 0.92,
+            "prefer_balanced_lines": True,
+            "prefer_single_line": False,
+            "text_color": [255, 255, 255],
+            "shadow_color": [0, 0, 0, 160],
+            "shadow_offset": [2, 3],
+        },
+        {
+            "id": "subtitle",
+            "enabled": True,
+            "source": "subtitle_or_empty",
+            "box": [text_left, subtitle_top, text_right, text_bottom],
+            "padding_x": max(30, int(width * 0.04)),
+            "padding_y": max(8, int(height * 0.008)),
+            "text_align": "center",
+            "vertical_align": "center",
+            "max_font_size": max(min_font_size, int(max_font_size * 0.52)),
+            "min_font_size": max(22, int(min_font_size * 0.60)),
+            "max_lines": 2,
+            "line_spacing_factor": 0.06,
+            "line_height_factor": 0.92,
+            "prefer_balanced_lines": True,
+            "prefer_single_line": True,
+            "text_color": [255, 255, 255],
+            "shadow_color": [0, 0, 0, 140],
+            "shadow_offset": [1, 2],
+        },
+    ]
+
+
+def extract_openai_output_text(response_data: dict) -> str:
+    output_text = response_data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    output_items = response_data.get("output", [])
+    if not isinstance(output_items, list):
+        return ""
+
+    parts = []
+    for item in output_items:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []):
+            if not isinstance(content, dict):
+                continue
+            text_value = content.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                parts.append(text_value.strip())
+    return "\n".join(parts).strip()
+
+
+def normalize_ai_text_boxes(candidate_boxes, width: int, height: int, max_font_size: int, min_font_size: int) -> list[dict]:
+    fallback_boxes = build_default_smart_text_boxes(width, height, max_font_size, min_font_size)
+    if not isinstance(candidate_boxes, list):
+        return fallback_boxes
+
+    normalized_boxes = []
+    for idx, raw_box_cfg in enumerate(candidate_boxes):
+        if not isinstance(raw_box_cfg, dict):
+            continue
+
+        raw_box = raw_box_cfg.get("box")
+        if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+            continue
+
+        try:
+            l, t, r, b = [int(float(v)) for v in raw_box]
+        except Exception:
+            continue
+
+        l = max(0, min(width - 2, l))
+        t = max(0, min(height - 2, t))
+        r = max(l + 2, min(width, r))
+        b = max(t + 2, min(height, b))
+        if (r - l) < 80 or (b - t) < 36:
+            continue
+
+        source = str(raw_box_cfg.get("source", "full_text") or "full_text").strip().lower()
+        if source not in {"full_text", "headline_or_full", "subtitle_or_empty", "remaining_segments", "segment"}:
+            source = "full_text"
+
+        normalized_boxes.append(
+            {
+                "id": str(raw_box_cfg.get("id", f"box_{idx + 1}")).strip() or f"box_{idx + 1}",
+                "enabled": bool(raw_box_cfg.get("enabled", True)),
+                "source": source,
+                "segment_index": int(raw_box_cfg.get("segment_index", 0) or 0),
+                "box": [l, t, r, b],
+                "padding_x": max(0, int(raw_box_cfg.get("padding_x", 24) or 0)),
+                "padding_y": max(0, int(raw_box_cfg.get("padding_y", 8) or 0)),
+                "text_align": str(raw_box_cfg.get("text_align", "center") or "center").lower(),
+                "vertical_align": str(raw_box_cfg.get("vertical_align", "center") or "center").lower(),
+                "max_font_size": max(12, min(int(raw_box_cfg.get("max_font_size", max_font_size) or max_font_size), max_font_size * 2)),
+                "min_font_size": max(10, min(int(raw_box_cfg.get("min_font_size", min_font_size) or min_font_size), max_font_size * 2)),
+                "max_lines": max(1, min(8, int(raw_box_cfg.get("max_lines", 4) or 4))),
+                "line_spacing_factor": float(raw_box_cfg.get("line_spacing_factor", 0.10) or 0.10),
+                "line_height_factor": float(raw_box_cfg.get("line_height_factor", 0.92) or 0.92),
+                "prefer_balanced_lines": bool(raw_box_cfg.get("prefer_balanced_lines", True)),
+                "prefer_single_line": bool(raw_box_cfg.get("prefer_single_line", False)),
+                "text_color": raw_box_cfg.get("text_color", [255, 255, 255]),
+                "shadow_color": raw_box_cfg.get("shadow_color", [0, 0, 0, 160]),
+                "shadow_offset": raw_box_cfg.get("shadow_offset", [2, 3]),
+            }
+        )
+
+    if not normalized_boxes:
+        return fallback_boxes
+
+    for box_cfg in normalized_boxes:
+        if box_cfg["min_font_size"] > box_cfg["max_font_size"]:
+            box_cfg["min_font_size"] = box_cfg["max_font_size"]
+
+    return normalized_boxes
+
+
+def analyze_template_text_boxes_with_openai(
+    source_bytes: bytes,
+    width: int,
+    height: int,
+    max_font_size: int,
+    min_font_size: int,
+) -> tuple[Optional[list[dict]], Optional[dict], Optional[str]]:
+    if not OPENAI_API_KEY:
+        return None, None, "OPENAI_API_KEY missing"
+
+    image_b64 = base64.b64encode(source_bytes).decode("ascii")
+    prompt = (
+        "Analyze this social media news template image and propose JSON text boxes for Arabic headline rendering. "
+        "Return only JSON with keys: summary, text_box_separator, text_boxes. "
+        "Assume the editor will send text as 'headline | subtitle'. "
+        "Use one title box and optionally one subtitle box only if the design clearly supports it. "
+        f"Image size is {width}x{height}. "
+        "Each text_boxes item must include: id, source, box, padding_x, padding_y, text_align, vertical_align, "
+        "max_font_size, min_font_size, max_lines, line_spacing_factor, line_height_factor, prefer_balanced_lines, prefer_single_line. "
+        "Keep boxes inside visible safe areas, avoid logos, avoid image focal areas when obvious, and preserve brand layout."
+    )
+
+    payload = {
+        "model": OPENAI_TEMPLATE_MODEL,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": f"data:image/png;base64,{image_b64}"},
+                ],
+            }
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "template_text_boxes",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "text_box_separator": {"type": "string"},
+                        "text_boxes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "source": {
+                                        "type": "string",
+                                        "enum": [
+                                            "full_text",
+                                            "headline_or_full",
+                                            "subtitle_or_empty",
+                                            "remaining_segments",
+                                            "segment",
+                                        ],
+                                    },
+                                    "segment_index": {"type": "integer"},
+                                    "box": {
+                                        "type": "array",
+                                        "items": {"type": "integer"},
+                                        "minItems": 4,
+                                        "maxItems": 4,
+                                    },
+                                    "padding_x": {"type": "integer"},
+                                    "padding_y": {"type": "integer"},
+                                    "text_align": {"type": "string", "enum": ["left", "center", "right"]},
+                                    "vertical_align": {"type": "string", "enum": ["top", "center", "bottom"]},
+                                    "max_font_size": {"type": "integer"},
+                                    "min_font_size": {"type": "integer"},
+                                    "max_lines": {"type": "integer"},
+                                    "line_spacing_factor": {"type": "number"},
+                                    "line_height_factor": {"type": "number"},
+                                    "prefer_balanced_lines": {"type": "boolean"},
+                                    "prefer_single_line": {"type": "boolean"},
+                                },
+                                "required": [
+                                    "id",
+                                    "source",
+                                    "box",
+                                    "padding_x",
+                                    "padding_y",
+                                    "text_align",
+                                    "vertical_align",
+                                    "max_font_size",
+                                    "min_font_size",
+                                    "max_lines",
+                                    "line_spacing_factor",
+                                    "line_height_factor",
+                                    "prefer_balanced_lines",
+                                    "prefer_single_line",
+                                ],
+                            },
+                        },
+                    },
+                    "required": ["summary", "text_box_separator", "text_boxes"],
+                },
+            }
+        },
+    }
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            response_data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
+            body = str(e)
+        return None, None, f"OpenAI HTTP {e.code}: {body[:400]}"
+    except Exception as e:
+        return None, None, f"OpenAI request failed: {e}"
+
+    output_text = extract_openai_output_text(response_data)
+    if not output_text:
+        return None, response_data, "OpenAI returned no output text"
+
+    try:
+        ai_json = json.loads(output_text)
+    except Exception as e:
+        return None, response_data, f"OpenAI returned invalid JSON: {e}"
+
+    separator = str(ai_json.get("text_box_separator", "|") or "|")
+    normalized_boxes = normalize_ai_text_boxes(
+        ai_json.get("text_boxes"),
+        width=width,
+        height=height,
+        max_font_size=max_font_size,
+        min_font_size=min_font_size,
+    )
+    metadata = {
+        "summary": str(ai_json.get("summary", "") or "").strip(),
+        "separator": separator,
+        "model": OPENAI_TEMPLATE_MODEL,
+    }
+    return normalized_boxes, metadata, None
 
 
 def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
@@ -370,6 +667,27 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
     attach_template_font(folder_path)
 
     config = build_default_template_config(template_name, folder_name, width, height)
+    ai_text_boxes, ai_metadata, ai_error = analyze_template_text_boxes_with_openai(
+        source_bytes=source_bytes,
+        width=width,
+        height=height,
+        max_font_size=int(config.get("max_font_size", 120)),
+        min_font_size=int(config.get("min_font_size", 28)),
+    )
+    if ai_text_boxes:
+        config["text_boxes"] = ai_text_boxes
+        config["text_box_separator"] = str(ai_metadata.get("separator", "|") if ai_metadata else "|")
+        config["text_boxes_ai"] = {
+            "enabled": True,
+            "model": str(ai_metadata.get("model", OPENAI_TEMPLATE_MODEL) if ai_metadata else OPENAI_TEMPLATE_MODEL),
+            "summary": str(ai_metadata.get("summary", "") if ai_metadata else ""),
+        }
+    else:
+        config["text_boxes_ai"] = {
+            "enabled": False,
+            "model": OPENAI_TEMPLATE_MODEL,
+            "error": str(ai_error or "fallback_to_default"),
+        }
     config_path = os.path.join(folder_path, "config.json")
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
@@ -1647,6 +1965,227 @@ def split_text_segments(text: str, separator: str = "|", max_parts: int = 3) -> 
     return [part for part in parts if part]
 
 
+def resolve_text_box_content(
+    full_text: str,
+    box_cfg: dict,
+    separator: str = "|",
+) -> str:
+    cleaned_text = clean_text_safe(full_text)
+    if not cleaned_text:
+        return ""
+
+    source = str(box_cfg.get("source", "full_text") or "full_text").strip().lower()
+    segments = split_text_segments(
+        cleaned_text,
+        separator=str(box_cfg.get("separator", separator) or separator),
+        max_parts=int(box_cfg.get("max_source_parts", 4)),
+    )
+
+    if source == "full_text":
+        return cleaned_text
+    if source == "headline_or_full":
+        return segments[0] if segments else cleaned_text
+    if source == "subtitle_or_empty":
+        if len(segments) >= 2:
+            return segments[1]
+        return ""
+    if source == "remaining_segments":
+        return clean_text_safe(" ".join(segments[1:])) if len(segments) >= 2 else ""
+    if source == "segment":
+        segment_index = int(box_cfg.get("segment_index", 0))
+        if 0 <= segment_index < len(segments):
+            return segments[segment_index]
+        return ""
+    return cleaned_text
+
+
+def draw_smart_text_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_path: str,
+    box_cfg: dict,
+    default_cfg: dict,
+):
+    content = clean_text_safe(text)
+    if not content:
+        return
+
+    raw_box = box_cfg.get("box")
+    if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+        return
+
+    l, t, r, b = [int(v) for v in raw_box]
+    if r <= l or b <= t:
+        return
+
+    bg_box = box_cfg.get("bg_box")
+    if bg_box and isinstance(bg_box, (list, tuple)) and len(bg_box) == 4:
+        draw_fill_box(
+            draw,
+            tuple(int(v) for v in bg_box),
+            tuple(box_cfg.get("bg_fill", [0, 0, 0, 140])),
+            int(box_cfg.get("bg_radius", 0)),
+        )
+
+    pad_x = int(box_cfg.get("padding_x", default_cfg.get("text_padding_x", 0)))
+    pad_y = int(box_cfg.get("padding_y", default_cfg.get("text_padding_y", 0)))
+    l += pad_x
+    r -= pad_x
+    t += pad_y
+    b -= pad_y
+
+    box_w = r - l
+    box_h = b - t
+    if box_w <= 0 or box_h <= 0:
+        return
+
+    max_font_size = int(box_cfg.get("max_font_size", default_cfg.get("max_font_size", 120)))
+    min_font_size = int(box_cfg.get("min_font_size", default_cfg.get("min_font_size", 28)))
+    max_lines = int(box_cfg.get("max_lines", default_cfg.get("max_lines", 4)))
+    text_align = str(box_cfg.get("text_align", default_cfg.get("text_align", "center"))).lower()
+    vertical_align = str(box_cfg.get("vertical_align", "center")).lower()
+    vertical_offset = int(box_cfg.get("vertical_offset", 0))
+    line_spacing_factor = float(box_cfg.get("line_spacing_factor", default_cfg.get("line_spacing_factor", 0.12)))
+    line_height_factor = float(box_cfg.get("line_height_factor", default_cfg.get("line_height_factor", 1.0)))
+    reshape_enabled = bool(box_cfg.get("reshape_text", True))
+    prefer_raqm = bool(box_cfg.get("prefer_raqm", True))
+    prefer_balanced_lines = bool(box_cfg.get("prefer_balanced_lines", True))
+    prefer_single_line = bool(box_cfg.get("prefer_single_line", False))
+
+    text_color = tuple(box_cfg.get("text_color", default_cfg.get("text_color", [255, 255, 255])))
+    shadow_color = tuple(box_cfg.get("shadow_color", default_cfg.get("shadow_color", [0, 0, 0, 140])))
+    shadow_offset = tuple(box_cfg.get("shadow_offset", default_cfg.get("shadow_offset", [2, 3])))
+
+    final_lines = [content]
+    final_heights = []
+    final_spacing = 0
+    font_size = max_font_size
+
+    while font_size >= min_font_size:
+        font = ImageFont.truetype(font_path, font_size)
+
+        if prefer_single_line:
+            single_w, single_h = text_bbox(
+                draw,
+                content,
+                font,
+                reshape_enabled=reshape_enabled,
+                prefer_raqm=prefer_raqm,
+            )
+            if single_w <= box_w and single_h <= box_h:
+                lines = [content]
+            elif prefer_balanced_lines:
+                lines = break_lines_ar_balanced(
+                    draw,
+                    content,
+                    font,
+                    box_w,
+                    max_lines=max_lines,
+                    reshape_enabled=reshape_enabled,
+                )
+            else:
+                lines = choose_text_lines(
+                    draw,
+                    content,
+                    font,
+                    box_w,
+                    max_lines=max_lines,
+                    reshape_enabled=reshape_enabled,
+                )
+        elif prefer_balanced_lines:
+            lines = break_lines_ar_balanced(
+                draw,
+                content,
+                font,
+                box_w,
+                max_lines=max_lines,
+                reshape_enabled=reshape_enabled,
+            )
+        else:
+            lines = choose_text_lines(
+                draw,
+                content,
+                font,
+                box_w,
+                max_lines=max_lines,
+                reshape_enabled=reshape_enabled,
+            )
+
+        widths = []
+        heights = []
+        for ln in lines:
+            wpx, hpx = text_bbox(
+                draw,
+                ln,
+                font,
+                reshape_enabled=reshape_enabled,
+                prefer_raqm=prefer_raqm,
+            )
+            widths.append(wpx)
+            heights.append(max(1, int(hpx * line_height_factor)))
+
+        spacing = max(0, int(font_size * line_spacing_factor))
+        total_h = sum(heights) + spacing * (len(lines) - 1)
+
+        if (max(widths) if widths else 0) <= box_w and total_h <= box_h:
+            final_lines = lines
+            final_heights = heights
+            final_spacing = spacing
+            break
+
+        font_size -= 2
+
+    font_size = max(min_font_size, font_size)
+    font = ImageFont.truetype(font_path, font_size)
+    if not final_heights:
+        final_heights = [
+            max(
+                1,
+                int(
+                    text_bbox(
+                        draw,
+                        ln,
+                        font,
+                        reshape_enabled=reshape_enabled,
+                        prefer_raqm=prefer_raqm,
+                    )[1]
+                    * line_height_factor
+                ),
+            )
+            for ln in final_lines
+        ]
+        final_spacing = max(0, int(font_size * line_spacing_factor))
+
+    total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
+    if vertical_align == "top":
+        y = t + vertical_offset
+    elif vertical_align == "bottom":
+        y = b - total_h + vertical_offset
+    else:
+        y = t + max(0, (box_h - total_h) // 2) + vertical_offset
+
+    for i, ln in enumerate(final_lines):
+        rendered_text, draw_kwargs = get_text_render_parts(
+            ln,
+            reshape_enabled=reshape_enabled,
+            prefer_raqm=prefer_raqm,
+        )
+        x = resolve_text_x_in_box(
+            draw,
+            ln,
+            font,
+            l,
+            r,
+            align=text_align,
+            reshape_enabled=reshape_enabled,
+            prefer_raqm=prefer_raqm,
+        )
+        sx, sy = shadow_offset
+        draw.text((x + sx, y + sy), rendered_text, font=font, fill=shadow_color, **draw_kwargs)
+        draw.text((x, y), rendered_text, font=font, fill=text_color, **draw_kwargs)
+        y += final_heights[i] + final_spacing
+
+
 # ===================== Render =====================
 def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.Image:
     template_path = template_cfg["template_path"]
@@ -2038,6 +2577,29 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
 
     if not bool(template_cfg.get("render_text", True)):
         return canvas.convert("RGB")
+
+    text_boxes = template_cfg.get("text_boxes")
+    if isinstance(text_boxes, list) and text_boxes:
+        separator = str(template_cfg.get("text_box_separator", "|") or "|")
+        rendered_any_text = False
+        for box_cfg in text_boxes:
+            if not isinstance(box_cfg, dict):
+                continue
+            if not bool(box_cfg.get("enabled", True)):
+                continue
+            box_text = resolve_text_box_content(text, box_cfg, separator=separator)
+            if not box_text:
+                continue
+            draw_smart_text_box(
+                draw=draw,
+                text=box_text,
+                font_path=ensure_existing_path(box_cfg.get("font_bold_path", font_bold_path), font_bold_path),
+                box_cfg=box_cfg,
+                default_cfg=template_cfg,
+            )
+            rendered_any_text = True
+        if rendered_any_text:
+            return canvas.convert("RGB")
 
     text_box = tuple(template_cfg["text_box"])
     if template_cfg.get("text_bg_box"):
