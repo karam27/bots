@@ -39,14 +39,15 @@
   "name_subtitle_separator": "|",
   "name_subtitle_split_markers": ["استشهد", "ارتقى", "ارتقى شهيداً", "ارتقى شهيدا", "استُشهد"],
   "name_subtitle_auto_split_words": 0,
-  "name_subtitle_box": [72, 920, 952, 1075],
+  "name_subtitle_box": [52, 920, 972, 1075],
   "name_subtitle_text_color": [28, 69, 112],
   "name_subtitle_shadow_color": [255, 255, 255, 0],
   "name_subtitle_shadow_offset": [0, 0],
-  "name_subtitle_max_font_size": 68,
-  "name_subtitle_min_font_size": 34,
+  "name_subtitle_max_font_size": 58,
+  "name_subtitle_min_font_size": 28,
   "name_subtitle_max_lines": 2,
   "name_subtitle_vertical_offset": -6,
+  "name_subtitle_prefer_single_line": true,
   "name_reshape_text": true,
   "name_prefer_raqm": true
 }

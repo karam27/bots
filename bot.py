@@ -1364,6 +1364,7 @@ def draw_centered_text_block(
     reshape_enabled: bool = True,
     prefer_raqm: bool = True,
     vertical_offset: int = 0,
+    prefer_single_line: bool = False,
 ):
     l, t, r, b = box
     box_w, box_h = r - l, b - t
@@ -1378,14 +1379,34 @@ def draw_centered_text_block(
 
     while font_size >= min_font_size:
         font = ImageFont.truetype(font_path, font_size)
-        lines = choose_text_lines(
-            draw,
-            text,
-            font,
-            box_w,
-            max_lines=max_lines,
-            reshape_enabled=reshape_enabled,
-        )
+        if prefer_single_line:
+            single_w, single_h = text_bbox(
+                draw,
+                text,
+                font,
+                reshape_enabled=reshape_enabled,
+                prefer_raqm=prefer_raqm,
+            )
+            if single_w <= box_w and single_h <= box_h:
+                lines = [text]
+            else:
+                lines = choose_text_lines(
+                    draw,
+                    text,
+                    font,
+                    box_w,
+                    max_lines=max_lines,
+                    reshape_enabled=reshape_enabled,
+                )
+        else:
+            lines = choose_text_lines(
+                draw,
+                text,
+                font,
+                box_w,
+                max_lines=max_lines,
+                reshape_enabled=reshape_enabled,
+            )
 
         widths = []
         heights = []
@@ -2012,6 +2033,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 reshape_enabled=bool(template_cfg.get("name_subtitle_reshape_text", True)),
                 prefer_raqm=bool(template_cfg.get("name_subtitle_prefer_raqm", True)),
                 vertical_offset=subtitle_vertical_offset,
+                prefer_single_line=bool(template_cfg.get("name_subtitle_prefer_single_line", False)),
             )
 
     if not bool(template_cfg.get("render_text", True)):
