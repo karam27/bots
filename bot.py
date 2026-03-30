@@ -2058,6 +2058,10 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     short_words_font_scale = float(template_cfg.get("short_words_font_scale", 1.95))
     long_words_font_scale = float(template_cfg.get("long_words_font_scale", 0.90))
     short_style_mode = words_count <= short_words_threshold
+    few_lines_threshold = int(template_cfg.get("few_lines_threshold", 0))
+
+    def is_few_lines_mode(line_count: int) -> bool:
+        return few_lines_threshold > 0 and line_count <= few_lines_threshold
     short_text_align = str(template_cfg.get("short_text_align", "center")).lower()
     text_align = short_text_align if short_style_mode else base_text_align
 
@@ -2099,10 +2103,24 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         spacing_factor = float(template_cfg.get("line_spacing_factor", 0.24 if len(lines) >= 4 else 0.30))
         if short_style_mode:
             spacing_factor = float(template_cfg.get("short_line_spacing_factor", 0.18))
+        if is_few_lines_mode(len(lines)):
+            spacing_factor = float(
+                template_cfg.get(
+                    "few_line_spacing_factor",
+                    template_cfg.get("short_line_spacing_factor", spacing_factor),
+                )
+            )
 
         line_height_factor = float(template_cfg.get("line_height_factor", 1.0))
         if short_style_mode:
             line_height_factor = float(template_cfg.get("short_line_height_factor", line_height_factor))
+        if is_few_lines_mode(len(lines)):
+            line_height_factor = float(
+                template_cfg.get(
+                    "few_line_height_factor",
+                    template_cfg.get("short_line_height_factor", line_height_factor),
+                )
+            )
         effective_heights = [max(1, int(h * line_height_factor)) for h in heights]
 
         spacing = int(font_size * spacing_factor)
@@ -2127,9 +2145,23 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         spacing_factor = float(template_cfg.get("line_spacing_factor", 0.24))
         if short_style_mode:
             spacing_factor = float(template_cfg.get("short_line_spacing_factor", 0.18))
+        if is_few_lines_mode(len(final_lines)):
+            spacing_factor = float(
+                template_cfg.get(
+                    "few_line_spacing_factor",
+                    template_cfg.get("short_line_spacing_factor", spacing_factor),
+                )
+            )
         line_height_factor = float(template_cfg.get("line_height_factor", 1.0))
         if short_style_mode:
             line_height_factor = float(template_cfg.get("short_line_height_factor", line_height_factor))
+        if is_few_lines_mode(len(final_lines)):
+            line_height_factor = float(
+                template_cfg.get(
+                    "few_line_height_factor",
+                    template_cfg.get("short_line_height_factor", line_height_factor),
+                )
+            )
         final_heights = [
             max(1, int(text_bbox(draw, ln, font)[1] * line_height_factor))
             for ln in final_lines
@@ -2142,13 +2174,43 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     stretch_long_text = bool(template_cfg.get("stretch_long_text", True))
     stretch_short_text = bool(template_cfg.get("stretch_short_text", True))
     compact_short_text = bool(template_cfg.get("compact_short_text", False))
+    few_lines_mode = is_few_lines_mode(len(final_lines))
+    stretch_few_lines_text = bool(template_cfg.get("stretch_few_lines_text", False))
+    compact_few_lines_text = bool(template_cfg.get("compact_few_lines_text", False))
 
     short_centered_layout = bool(template_cfg.get("short_centered_layout", True))
     short_center_offset = int(template_cfg.get("short_center_offset", -70))
     long_centered_layout = bool(template_cfg.get("long_centered_layout", False))
     long_center_offset = int(template_cfg.get("long_center_offset", 0))
+    few_lines_centered_layout = bool(template_cfg.get("few_lines_centered_layout", True))
+    few_lines_center_offset = int(template_cfg.get("few_lines_center_offset", 0))
 
-    if short_style_mode and short_centered_layout:
+    if few_lines_mode and few_lines_centered_layout:
+        if compact_few_lines_text and len(final_lines) > 1:
+            few_lines_max_fill_ratio = float(
+                template_cfg.get(
+                    "few_lines_max_fill_ratio",
+                    template_cfg.get("short_max_fill_ratio", 0.34),
+                )
+            )
+            max_total_h = int(box_h * few_lines_max_fill_ratio)
+            if max_total_h > 0:
+                available_spacing = max_total_h - sum(final_heights)
+                max_spacing = max(0, available_spacing // (len(final_lines) - 1))
+                final_spacing = min(final_spacing, max_spacing)
+        elif len(final_lines) > 1:
+            few_lines_fill_ratio = float(
+                template_cfg.get(
+                    "few_lines_fill_ratio",
+                    template_cfg.get("short_fill_ratio", 0.86),
+                )
+            )
+            target_total_h = int(box_h * few_lines_fill_ratio)
+            desired_spacing = target_total_h - sum(final_heights)
+            final_spacing = max(final_spacing, desired_spacing)
+        total_h = sum(final_heights) + final_spacing * (len(final_lines) - 1)
+        y = t + max(0, (box_h - total_h) // 2) + few_lines_center_offset
+    elif short_style_mode and short_centered_layout:
         if compact_short_text and len(final_lines) > 1:
             short_max_fill_ratio = float(template_cfg.get("short_max_fill_ratio", 0.34))
             max_total_h = int(box_h * short_max_fill_ratio)
@@ -2174,7 +2236,12 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     else:
         y = t + top_start_offset
 
-    if stretch_short_text and not compact_short_text and len(final_lines) > 1 and short_style_mode:
+    if stretch_few_lines_text and len(final_lines) > 1 and few_lines_mode:
+        available_spacing = box_h - sum(final_heights)
+        if available_spacing > 0:
+            final_spacing = max(final_spacing, available_spacing // (len(final_lines) - 1))
+
+    if stretch_short_text and not compact_short_text and len(final_lines) > 1 and short_style_mode and not few_lines_mode:
         available_spacing = box_h - sum(final_heights)
         if available_spacing > 0:
             final_spacing = max(final_spacing, available_spacing // (len(final_lines) - 1))

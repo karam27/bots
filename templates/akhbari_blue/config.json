@@ -6,46 +6,80 @@
   "requires_text": true,
   "render_text": true,
   "select_prompt": "أرسل الصورة التي تريد استخدامها في القالب الإخباري.",
+
   "template_path": "templates/قالب اخباري.jpeg",
   "font_bold_path": "templates/classic/HEADLINERBOLD.otf",
+
   "image_mode": "full",
   "image_area_bottom": 1210,
-  "text_box": [70, 1235, 1562, 1878],
+
+  "text_box": [90, 1235, 1542, 1878],
+
   "template_cutouts": [
     {
       "shape": "rectangle",
       "box": [0, 0, 1632, 1210]
     }
   ],
+
   "template_overlay_boxes": [],
+
   "image_overlays": [
     {
       "path": "templates/akhbari_blue/logo.png",
       "box": [1188, 34, 1592, 181]
     }
   ],
-  "max_font_size": 110,
-  "min_font_size": 58,
+
+  "max_font_size": 128,
+  "min_font_size": 48,
+
   "text_color": [255, 255, 255],
   "shadow_color": [0, 0, 0, 140],
   "shadow_offset": [2, 3],
+
   "top_bias": 0.35,
+
   "text_align": "center",
   "short_text_align": "center",
-  "text_padding_x": 90,
-  "text_padding_y": 40,
-  "line_spacing_factor": 0.24,
-  "short_line_spacing_factor": 0.18,
-  "max_lines": 4,
-  "short_words_threshold": 6,
+
+  "text_padding_x": 56,
+  "text_padding_y": 22,
+
+  "line_spacing_factor": 0.00,
+  "short_line_spacing_factor": -0.01,
+  "few_lines_threshold": 2,
+  "few_line_spacing_factor": -0.02,
+
+  "line_height_factor": 0.84,
+  "short_line_height_factor": 0.80,
+  "few_line_height_factor": 0.76,
+
+  "max_lines": 5,
+
+  "short_words_threshold": 4,
+  "long_words_threshold": 11,
+
+  "short_words_font_scale": 1.18,
+  "long_words_font_scale": 0.80,
+
   "stretch_short_text": false,
   "stretch_long_text": false,
+  "stretch_few_lines_text": false,
+
   "short_centered_layout": true,
-  "short_center_offset": 0,
-  "short_fill_ratio": 0.60,
-  "compact_short_text": true,
-  "short_max_fill_ratio": 0.28,
   "long_centered_layout": true,
-  "long_center_offset": 0,
-  "long_fill_ratio": 0.52
+  "compact_short_text": true,
+  "few_lines_centered_layout": true,
+  "compact_few_lines_text": true,
+
+  "short_center_offset": 18,
+  "long_center_offset": 20,
+  "few_lines_center_offset": 18,
+
+  "short_fill_ratio": 0.40,
+  "short_max_fill_ratio": 0.26,
+  "few_lines_fill_ratio": 0.36,
+  "few_lines_max_fill_ratio": 0.28,
+  "long_fill_ratio": 0.60
 }
