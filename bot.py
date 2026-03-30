@@ -151,7 +151,11 @@ def template_toggle_keyboard(templates: dict, enabled_ids: Set[str]) -> InlineKe
                 InlineKeyboardButton(
                     f"{prefix} {display_name} [{tid}]",
                     callback_data=f"admin_tpl:{make_template_callback_id(tid)}",
-                )
+                ),
+                InlineKeyboardButton(
+                    "حذف",
+                    callback_data=f"admin_tpl_del:{make_template_callback_id(tid)}",
+                ),
             ]
         )
     rows.append([InlineKeyboardButton("رجوع", callback_data="admin:menu")])
@@ -166,6 +170,57 @@ def get_enabled_templates(templates: dict, state: dict, role: Optional[str]) -> 
     if not enabled_ids:
         return {}
     return {tid: cfg for tid, cfg in templates.items() if tid in enabled_ids}
+
+
+def find_template_storage_target(template_cfg: dict) -> tuple[Optional[str], str]:
+    template_path = str(template_cfg.get("template_path", "") or "")
+    if not template_path:
+        return None, "missing template_path"
+
+    abs_template_path = resolve_path(template_path)
+    try:
+        abs_template_path = os.path.abspath(abs_template_path)
+    except Exception:
+        return None, "invalid template_path"
+
+    templates_root = os.path.abspath(TEMPLATES_DIR)
+    if not abs_template_path.startswith(templates_root):
+        return None, "template outside templates directory"
+
+    parent_dir = os.path.dirname(abs_template_path)
+    if os.path.isfile(os.path.join(parent_dir, "config.json")):
+        return parent_dir, "folder"
+
+    cfg_file_candidate = os.path.splitext(abs_template_path)[0] + ".template.json"
+    if os.path.isfile(cfg_file_candidate):
+        return cfg_file_candidate, "file"
+
+    basename = os.path.splitext(os.path.basename(abs_template_path))[0]
+    loose_cfg_candidate = os.path.join(templates_root, f"{basename}.template.json")
+    if os.path.isfile(loose_cfg_candidate):
+        return loose_cfg_candidate, "file"
+
+    return parent_dir, "folder"
+
+
+def delete_template_from_disk(template_cfg: dict) -> Optional[str]:
+    target_path, target_kind = find_template_storage_target(template_cfg)
+    if not target_path:
+        return "تعذر تحديد مكان القالب على القرص."
+
+    try:
+        if target_kind == "folder":
+            if not os.path.isdir(target_path):
+                return f"مجلد القالب غير موجود: {target_path}"
+            shutil.rmtree(target_path)
+        else:
+            if not os.path.isfile(target_path):
+                return f"ملف القالب غير موجود: {target_path}"
+            os.remove(target_path)
+    except Exception as e:
+        return f"فشل حذف القالب: {e}"
+
+    return None
 
 
 def employee_count_text(state: dict) -> str:
@@ -3109,6 +3164,85 @@ async def admin_template_toggle_cb_v2(update: Update, context: ContextTypes.DEFA
     )
 
 
+async def admin_template_delete_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not await safe_answer_callback(q):
+        return
+
+    if context.user_data.get("role") != "admin":
+        await safe_answer_callback(q, "هذه القائمة للمدير فقط.", show_alert=True)
+        return
+
+    templates = get_templates(context, force_reload=True)
+    callback_token = q.data.split(":", 1)[1]
+    template_id = find_template_id_by_callback_token(templates, callback_token)
+    if template_id not in templates:
+        await safe_answer_callback(q, "القالب غير موجود", show_alert=True)
+        return
+
+    if template_id == DEFAULT_TEMPLATE_ID:
+        await safe_answer_callback(q, "لا يمكن حذف القالب الافتراضي.", show_alert=True)
+        return
+
+    display_name = str(templates[template_id].get("name", template_id))
+    await q.edit_message_text(
+        f"هل تريد حذف القالب:\n{display_name} [{template_id}]؟\nسيتم حذف ملفاته نهائياً من مجلد templates.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("تأكيد الحذف", callback_data=f"admin_tpl_del_confirm:{make_template_callback_id(template_id)}"),
+                    InlineKeyboardButton("إلغاء", callback_data="admin:templates"),
+                ]
+            ]
+        ),
+    )
+
+
+async def admin_template_delete_confirm_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not await safe_answer_callback(q):
+        return
+
+    if context.user_data.get("role") != "admin":
+        await safe_answer_callback(q, "هذه القائمة للمدير فقط.", show_alert=True)
+        return
+
+    templates = get_templates(context, force_reload=True)
+    callback_token = q.data.split(":", 1)[1]
+    template_id = find_template_id_by_callback_token(templates, callback_token)
+    if template_id not in templates:
+        await safe_answer_callback(q, "القالب غير موجود", show_alert=True)
+        return
+
+    if template_id == DEFAULT_TEMPLATE_ID:
+        await safe_answer_callback(q, "لا يمكن حذف القالب الافتراضي.", show_alert=True)
+        return
+
+    delete_error = delete_template_from_disk(templates[template_id])
+    if delete_error:
+        await q.edit_message_text(
+            f"تعذر حذف القالب [{template_id}].\nالسبب: {delete_error}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin:templates")]]),
+        )
+        return
+
+    state = load_admin_state()
+    enabled_ids = set(state.get("enabled_templates", []))
+    enabled_ids.discard(template_id)
+    state["enabled_templates"] = sorted(enabled_ids)
+    save_admin_state(state)
+
+    await q.edit_message_text(
+        f"تم حذف القالب [{template_id}] بنجاح.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("إدارة القوالب", callback_data="admin:templates")],
+                [InlineKeyboardButton("رجوع", callback_data="admin:menu")],
+            ]
+        ),
+    )
+
+
 async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not await safe_answer_callback(q):
@@ -3483,6 +3617,8 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
     app.add_handler(CallbackQueryHandler(nav_cb_v2, pattern=r"^nav:"))
     app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
+    app.add_handler(CallbackQueryHandler(admin_template_delete_cb_v2, pattern=r"^admin_tpl_del:"))
+    app.add_handler(CallbackQueryHandler(admin_template_delete_confirm_cb_v2, pattern=r"^admin_tpl_del_confirm:"))
     app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_image_document_v2))
