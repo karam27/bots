@@ -9,16 +9,14 @@
   "template_path": "templates/قالب الصور/قالب الصور.jpeg",
   "font_bold_path": "templates/قالب الصور/HEADLINERBOLD.otf",
   "image_mode": "full",
-  "image_area_bottom": 1320,
+  "image_area_bottom": 1600,
   "template_cutouts": [
     {
       "shape": "rectangle",
-      "box": [0, 0, 1080, 1320]
+      "box": [0, 0, 1080, 1350]
     }
   ],
-  "template_overlay_boxes": [
-    [0, 1318, 1080, 1350]
-  ],
+  "template_overlay_boxes": [],
   "image_overlays": [
     {
       "path": "templates/قالب الصور/logo.png",

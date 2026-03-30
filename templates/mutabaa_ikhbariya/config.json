@@ -25,8 +25,8 @@
       "box": [715, 28, 1048, 147]
     }
   ],
-  "max_font_size": 92,
-  "min_font_size": 44,
+  "max_font_size": 84,
+  "min_font_size": 40,
   "text_color": [255, 255, 255],
   "shadow_color": [0, 0, 0, 150],
   "shadow_offset": [2, 3],
@@ -40,7 +40,11 @@
   "max_lines": 4,
   "short_words_threshold": 6,
   "short_centered_layout": true,
-  "short_center_offset": -120,
+  "few_lines_centered_layout": true,
+  "long_centered_layout": true,
+  "short_center_offset": 0,
+  "few_lines_center_offset": 0,
+  "long_center_offset": 0,
   "short_fill_ratio": 0.60,
   "stretch_short_text": true,
   "caption_bg_box": [40, 52, 360, 118],
