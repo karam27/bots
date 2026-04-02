@@ -13,14 +13,13 @@
   "font_bold_path": "templates/classic/HEADLINERBOLD.otf",
 
   "image_mode": "full",
-  "image_area_bottom": 1225,
+  "image_area_bottom": 1370,
   "image_box": [0, 0, 1632, 1398],
   "image_mask_box": [0, 0, 1632, 1398],
   "image_mask_shape": "rectangle",
+  "image_zoom": 1.12,
   "template_cutouts": [{"shape": "rectangle", "box": [0, 0, 1632, 1225]}],
-  "template_overlay_boxes": [
-    [140, 900, 1492, 1498]
-  ],
+  "template_overlay_boxes": [],
   "image_overlays": [
     {
       "path": "templates/الاقتحامات/logo.png",
@@ -30,7 +29,20 @@
 
   "stat_layout_enabled": true,
   "stat_separator": "|",
-  "stat_word_fixed_text": "مستوطن",
+  "image_gradient_overlay": {
+    "enabled": true,
+    "box": [0, 0, 1632, 1225],
+    "direction": "vertical",
+    "start_color": [12, 18, 26, 0],
+    "end_color": [182, 32, 24, 150]
+  },
+  "foreground_gradient_overlay": {
+    "enabled": true,
+    "box": [60, 760, 1572, 1470],
+    "direction": "vertical",
+    "start_color": [255, 255, 255, 0],
+    "end_color": [214, 40, 32, 92]
+  },
 
 
   "stat_number_box": [430, 760, 1202, 1260], 
@@ -61,7 +73,7 @@
   "text_box": [151, 1541, 1481, 1783],
   "text_color": [255, 255, 255],
   "text_align": "center",
-  "top_bias": 0.5,
+  "top_bias": 0.42,
 
 
   "number_frame_box": [230, 907, 1402, 1300],

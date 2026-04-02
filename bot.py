@@ -293,6 +293,10 @@ def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
         "awaiting_stat_body",
         "pending_stat_number",
         "pending_stat_word",
+        "awaiting_montage_video",
+        "awaiting_montage_text",
+        "montage_video_path",
+        "montage_video_name",
     }
     return {k: v for k, v in context.user_data.items() if k in keep_keys}
 
@@ -326,6 +330,21 @@ def clear_stat_prompt_state(context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop(key, None)
 
 
+def clear_montage_state(context: ContextTypes.DEFAULT_TYPE):
+    for key in (
+        "awaiting_montage_video",
+        "awaiting_montage_text",
+        "montage_video_path",
+        "montage_video_name",
+    ):
+        value = context.user_data.pop(key, None)
+        if key == "montage_video_path" and value and os.path.isfile(value):
+            try:
+                os.remove(value)
+            except Exception:
+                pass
+
+
 def is_image_document(document) -> bool:
     if not document:
         return False
@@ -334,6 +353,16 @@ def is_image_document(document) -> bool:
     if mime_type.startswith("image/"):
         return True
     return file_name.endswith((".png", ".jpg", ".jpeg", ".webp"))
+
+
+def is_video_document(document) -> bool:
+    if not document:
+        return False
+    mime_type = str(getattr(document, "mime_type", "") or "").lower()
+    file_name = str(getattr(document, "file_name", "") or "").lower()
+    if mime_type.startswith("video/"):
+        return True
+    return file_name.endswith((".mp4", ".mov", ".m4v", ".webm", ".mkv"))
 
 
 def make_template_folder_name(template_name: str) -> str:
@@ -1155,6 +1184,61 @@ def build_shape_mask(size, shape: str, bleed: int = 0, feather: float = 0.0):
     return mask
 
 
+def build_linear_gradient(size, start_color, end_color, direction: str = "vertical") -> Image.Image:
+    width, height = size
+    width = max(1, int(width))
+    height = max(1, int(height))
+    direction = str(direction or "vertical").lower()
+
+    start = tuple(int(v) for v in (list(start_color) + [0, 0, 0, 0])[:4])
+    end = tuple(int(v) for v in (list(end_color) + [0, 0, 0, 0])[:4])
+
+    gradient = Image.new("RGBA", (width, height), start)
+    px = gradient.load()
+
+    if direction == "horizontal":
+        denom = max(1, width - 1)
+        for x in range(width):
+            ratio = x / denom
+            color = tuple(int(start[i] + (end[i] - start[i]) * ratio) for i in range(4))
+            for y in range(height):
+                px[x, y] = color
+        return gradient
+
+    denom = max(1, height - 1)
+    for y in range(height):
+        ratio = y / denom
+        color = tuple(int(start[i] + (end[i] - start[i]) * ratio) for i in range(4))
+        for x in range(width):
+            px[x, y] = color
+    return gradient
+
+
+def apply_gradient_overlay(canvas: Image.Image, overlay_cfg: dict, default_box):
+    if not isinstance(overlay_cfg, dict) or not bool(overlay_cfg.get("enabled", False)):
+        return
+
+    overlay_box = overlay_cfg.get("box", default_box)
+    if not isinstance(overlay_box, (list, tuple)) or len(overlay_box) != 4:
+        overlay_box = default_box
+
+    l, t, r, b = [int(v) for v in overlay_box]
+    if r <= l or b <= t:
+        return
+
+    gradient = build_linear_gradient(
+        (r - l, b - t),
+        overlay_cfg.get("start_color", [0, 0, 0, 0]),
+        overlay_cfg.get("end_color", [0, 0, 0, 120]),
+        direction=str(overlay_cfg.get("direction", "vertical")),
+    )
+    canvas.alpha_composite(gradient, (l, t))
+
+
+def apply_image_gradient_overlay(canvas: Image.Image, template_cfg: dict, image_box):
+    apply_gradient_overlay(canvas, template_cfg.get("image_gradient_overlay"), image_box)
+
+
 # ===================== Remove white background =====================
 def remove_near_white_background(
     img: Image.Image,
@@ -1830,6 +1914,7 @@ def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
         buttons.append(
             [InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{make_template_callback_id(tid)}")]
         )
+    buttons.append([InlineKeyboardButton("🎬 مونتاج", callback_data="mode:montage")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -1868,6 +1953,204 @@ async def send_rendered_post(
         pool_timeout=30,
     )
     reset_design_state(context)
+
+
+def get_ffmpeg_paths() -> tuple[Optional[str], Optional[str]]:
+    return shutil.which("ffmpeg"), shutil.which("ffprobe")
+
+
+def get_default_montage_logo_path() -> Optional[str]:
+    candidates = [
+        os.path.join(TEMPLATES_DIR, "الاقتحامات", "logo.png"),
+        os.path.join(TEMPLATES_DIR, "breaking", "logo.png"),
+        os.path.join(TEMPLATES_DIR, "mutabaa_ikhbariya", "logo.png"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def get_video_dimensions(ffprobe_path: str, video_path: str) -> tuple[int, int]:
+    result = subprocess.run(
+        [
+            ffprobe_path,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            video_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    width_str, height_str = result.stdout.strip().split("x", 1)
+    return int(width_str), int(height_str)
+
+
+def wrap_text_to_width(draw, text: str, font, max_width: int) -> List[str]:
+    words = [w for w in text.split() if w.strip()]
+    if not words:
+        return [""]
+
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}".strip()
+        candidate_width, _ = text_bbox(draw, candidate, font)
+        if candidate_width <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def create_montage_text_overlay(output_path: str, width: int, height: int, text: str):
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
+    max_width = int(width * 0.82)
+    font_size = max(42, int(width * 0.07))
+    min_font_size = max(24, int(width * 0.035))
+
+    cleaned = clean_text_safe(text)
+    lines = [cleaned]
+    font = ImageFont.truetype(font_path, font_size)
+    while font_size >= min_font_size:
+        font = ImageFont.truetype(font_path, font_size)
+        lines = wrap_text_to_width(draw, cleaned, font, max_width)
+        if len(lines) <= 2:
+            widths = [text_bbox(draw, line, font)[0] for line in lines]
+            if (max(widths) if widths else 0) <= max_width:
+                break
+        font_size -= 2
+
+    spacing = max(8, int(font_size * 0.16))
+    heights = [text_bbox(draw, line, font)[1] for line in lines]
+    total_h = sum(heights) + spacing * max(0, len(lines) - 1)
+    y = int(height * 0.76 - total_h / 2)
+
+    for index, line in enumerate(lines):
+        rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
+        wpx, hpx = text_bbox(draw, line, font)
+        x = int((width - wpx) / 2)
+        draw.text((x + 3, y + 4), rendered_text, font=font, fill=(0, 0, 0, 160), **draw_kwargs)
+        draw.text((x, y), rendered_text, font=font, fill=(255, 255, 255, 255), **draw_kwargs)
+        y += hpx + spacing
+
+    canvas.save(output_path, format="PNG")
+
+
+def create_resized_logo_overlay(output_path: str, width: int):
+    logo_path = get_default_montage_logo_path()
+    if not logo_path:
+        raise RuntimeError("لم يتم العثور على شعار للمونتاج داخل templates.")
+
+    with Image.open(logo_path) as logo_img:
+        logo = logo_img.convert("RGBA")
+        target_w = max(180, int(width * 0.24))
+        scale = target_w / max(1, logo.width)
+        target_h = max(1, int(logo.height * scale))
+        logo = logo.resize((target_w, target_h), Image.LANCZOS)
+        logo.save(output_path, format="PNG")
+
+
+def render_montage_video(input_video_path: str, text: str) -> str:
+    ffmpeg_path, ffprobe_path = get_ffmpeg_paths()
+    if not ffmpeg_path or not ffprobe_path:
+        raise RuntimeError("ميزة المونتاج تحتاج ffmpeg و ffprobe مثبتين على الجهاز.")
+
+    width, height = get_video_dimensions(ffprobe_path, input_video_path)
+    work_dir = tempfile.mkdtemp(prefix="montage_", dir=BASE_DIR)
+    logo_overlay_path = os.path.join(work_dir, "logo_overlay.png")
+    text_overlay_path = os.path.join(work_dir, "text_overlay.png")
+    output_path = os.path.join(work_dir, "montage_output.mp4")
+
+    create_resized_logo_overlay(logo_overlay_path, width)
+    create_montage_text_overlay(text_overlay_path, width, height, text)
+
+    logo_y = max(24, int(height * 0.04))
+    text_start_y = int(height * 0.79)
+    text_end_y = int(height * 0.73)
+    move_duration = 0.65
+    text_y_expr = (
+        f"if(lt(t,{move_duration}),"
+        f"{text_start_y}-(({text_start_y}-{text_end_y})*t/{move_duration}),"
+        f"{text_end_y})"
+    )
+
+    subprocess.run(
+        [
+            ffmpeg_path,
+            "-y",
+            "-i",
+            input_video_path,
+            "-i",
+            logo_overlay_path,
+            "-i",
+            text_overlay_path,
+            "-filter_complex",
+            (
+                f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
+                f"[v1][2:v]overlay=0:{text_y_expr}:format=auto[v]"
+            ),
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "22",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return output_path
+
+
+async def send_rendered_montage(update: Update, context: ContextTypes.DEFAULT_TYPE, video_path: str, text: str):
+    def _render():
+        output_path = render_montage_video(video_path, text)
+        work_dir = os.path.dirname(output_path)
+        try:
+            with open(output_path, "rb") as f:
+                data = f.read()
+            return BytesIO(data)
+        finally:
+            try:
+                shutil.rmtree(work_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    out_bio = await asyncio.to_thread(_render)
+    out_bio.seek(0)
+    await update.message.reply_document(
+        document=out_bio,
+        filename="montage.mp4",
+        read_timeout=120,
+        write_timeout=120,
+        connect_timeout=30,
+        pool_timeout=30,
+    )
+    clear_montage_state(context)
 
 
 def draw_centered_text_block(
@@ -2438,6 +2721,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         full_box = (0, 0, W, bottom)
         fitted = fit_image_to_box(news_img, full_box, top_bias=top_bias, left_bias=left_bias, zoom=image_zoom)
         canvas.paste(fitted, (0, 0), fitted if fitted.mode == "RGBA" else None)
+        apply_image_gradient_overlay(canvas, template_cfg, full_box)
 
     else:
         raw_image_box = template_cfg.get("image_box")
@@ -2480,6 +2764,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
 
         image_layer.alpha_composite(fitted, (paste_x, paste_y))
         canvas.paste(image_layer, (mask_box[0], mask_box[1]), mask)
+        apply_image_gradient_overlay(canvas, template_cfg, mask_box)
 
     canvas.alpha_composite(base)
     for overlay_box in template_cfg.get("template_overlay_boxes", []):
@@ -2518,6 +2803,13 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
                 canvas.alpha_composite(overlay_img, (l, t))
         except Exception:
             pass
+
+    apply_gradient_overlay(
+        canvas,
+        template_cfg.get("foreground_gradient_overlay"),
+        (0, 0, W, H),
+    )
+
     draw = ImageDraw.Draw(canvas)
 
     if template_cfg.get("caption_bg_box"):
@@ -3429,7 +3721,43 @@ async def choose_template_cb_v2(update: Update, context: ContextTypes.DEFAULT_TY
     await q.edit_message_text(f"تم اختيار القالب: {name}\n{prompt}")
 
 
+async def mode_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not await safe_answer_callback(q):
+        return
+
+    if context.user_data.get("role") not in {"admin", "employee"}:
+        await q.edit_message_text("اختر أولاً الدخول كمدير أو موظف.")
+        return
+
+    mode = q.data.split(":", 1)[1]
+    if mode != "montage":
+        await safe_answer_callback(q, "وضع غير مدعوم.", show_alert=True)
+        return
+
+    reset_design_state(context)
+    clear_stat_prompt_state(context)
+    clear_montage_state(context)
+    context.user_data["awaiting_montage_video"] = True
+    await q.edit_message_text(
+        "تم اختيار وضع المونتاج.\nأرسل الآن فيديو MP4 أو MOV، وبعده سأطلب منك النص المتحرك."
+    )
+
+
+async def store_montage_video_from_telegram_file(file_obj, suggested_name: str) -> str:
+    ext = os.path.splitext(suggested_name or "")[1].lower()
+    if ext not in {".mp4", ".mov", ".m4v", ".webm", ".mkv"}:
+        ext = ".mp4"
+    tmp_path = os.path.join(BASE_DIR, f"montage_{next(tempfile._get_candidate_names())}{ext}")
+    await file_obj.download_to_drive(custom_path=tmp_path)
+    return tmp_path
+
+
 async def handle_photo_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_montage_video"):
+        await update.message.reply_text("أرسل فيديو للمونتاج، وليس صورة.")
+        return
+
     if context.user_data.get("awaiting_new_template_image"):
         if context.user_data.get("role") != "admin":
             reset_design_state(context)
@@ -3521,6 +3849,20 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
     if not document:
         return
 
+    if context.user_data.get("awaiting_montage_video"):
+        if not is_video_document(document):
+            await update.message.reply_text("أرسل فيديو بصيغة MP4 أو MOV أو ملف فيديو واضح.")
+            return
+        file = await context.bot.get_file(document.file_id)
+        suggested_name = getattr(document, "file_name", "") or "montage.mp4"
+        tmp_path = await store_montage_video_from_telegram_file(file, suggested_name)
+        clear_montage_state(context)
+        context.user_data["montage_video_path"] = tmp_path
+        context.user_data["montage_video_name"] = suggested_name
+        context.user_data["awaiting_montage_text"] = True
+        await update.message.reply_text("أرسل الآن النص الذي تريد تحريكه على الفيديو.")
+        return
+
     if context.user_data.get("awaiting_new_template_image"):
         if context.user_data.get("role") != "admin":
             reset_design_state(context)
@@ -3610,6 +3952,25 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text("تمام. الآن ابعث النص.")
 
 
+async def handle_video_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    video = update.message.video
+    if not video:
+        return
+
+    if not context.user_data.get("awaiting_montage_video"):
+        await update.message.reply_text("إذا أردت المونتاج اختر زر مونتاج أولاً.")
+        return
+
+    file = await context.bot.get_file(video.file_id)
+    suggested_name = getattr(video, "file_name", "") or "montage.mp4"
+    tmp_path = await store_montage_video_from_telegram_file(file, suggested_name)
+    clear_montage_state(context)
+    context.user_data["montage_video_path"] = tmp_path
+    context.user_data["montage_video_name"] = suggested_name
+    context.user_data["awaiting_montage_text"] = True
+    await update.message.reply_text("أرسل الآن النص الذي تريد تحريكه على الفيديو.")
+
+
 async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_admin_password"):
         value = update.message.text.strip()
@@ -3626,6 +3987,23 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_status_text(state, templates),
             reply_markup=admin_menu_keyboard(),
         )
+        return
+
+    if context.user_data.get("awaiting_montage_text"):
+        video_path = context.user_data.get("montage_video_path")
+        if not video_path or not os.path.isfile(video_path):
+            clear_montage_state(context)
+            await update.message.reply_text("أرسل الفيديو من جديد أولاً.")
+            return
+        text = clean_text_safe(update.message.text) or update.message.text.strip()
+        if not text:
+            await update.message.reply_text("أرسل النص فقط.")
+            return
+        try:
+            await send_rendered_montage(update, context, video_path, text)
+        except Exception as e:
+            await update.message.reply_text(f"صار خطأ أثناء المونتاج: {e}")
+            clear_montage_state(context)
         return
 
     clear_obsolete_auth_state(context)
@@ -3802,12 +4180,14 @@ def main():
     app.add_handler(CommandHandler("start", start_v2))
     app.add_handler(CommandHandler("templates", templates_cmd_v2))
     app.add_handler(CallbackQueryHandler(role_cb_v2, pattern=r"^role:"))
+    app.add_handler(CallbackQueryHandler(mode_cb_v2, pattern=r"^mode:"))
     app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
     app.add_handler(CallbackQueryHandler(nav_cb_v2, pattern=r"^nav:"))
     app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
     app.add_handler(CallbackQueryHandler(admin_template_delete_cb_v2, pattern=r"^admin_tpl_del:"))
     app.add_handler(CallbackQueryHandler(admin_template_delete_confirm_cb_v2, pattern=r"^admin_tpl_del_confirm:"))
     app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video_v2))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_image_document_v2))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_v2))
