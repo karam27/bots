@@ -2016,9 +2016,9 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
-    max_width = int(width * 0.82)
-    font_size = max(42, int(width * 0.07))
-    min_font_size = max(24, int(width * 0.035))
+    max_width = int(width * 0.84)
+    font_size = max(44, int(width * 0.075))
+    min_font_size = max(24, int(width * 0.034))
 
     cleaned = clean_text_safe(text)
     lines = [cleaned]
@@ -2026,22 +2026,34 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     while font_size >= min_font_size:
         font = ImageFont.truetype(font_path, font_size)
         lines = wrap_text_to_width(draw, cleaned, font, max_width)
-        if len(lines) <= 2:
+        if len(lines) <= 3:
             widths = [text_bbox(draw, line, font)[0] for line in lines]
             if (max(widths) if widths else 0) <= max_width:
                 break
         font_size -= 2
 
-    spacing = max(8, int(font_size * 0.16))
+    spacing = max(10, int(font_size * 0.18))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
     y = int(height * 0.76 - total_h / 2)
+    pad_x = max(26, int(width * 0.035))
+    pad_y = max(18, int(height * 0.018))
+    band_left = int((width - max_width) / 2) - pad_x
+    band_right = width - band_left
+    band_top = y - pad_y
+    band_bottom = y + total_h + pad_y
+    radius = max(18, int(height * 0.022))
+    draw.rounded_rectangle(
+        (band_left, band_top, band_right, band_bottom),
+        radius=radius,
+        fill=(10, 14, 18, 90),
+    )
 
-    for index, line in enumerate(lines):
+    for line in lines:
         rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
         wpx, hpx = text_bbox(draw, line, font)
         x = int((width - wpx) / 2)
-        draw.text((x + 3, y + 4), rendered_text, font=font, fill=(0, 0, 0, 160), **draw_kwargs)
+        draw.text((x + 4, y + 5), rendered_text, font=font, fill=(0, 0, 0, 170), **draw_kwargs)
         draw.text((x, y), rendered_text, font=font, fill=(255, 255, 255, 255), **draw_kwargs)
         y += hpx + spacing
 
@@ -2091,14 +2103,19 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         "-y",
         "-i",
         input_video_path,
+        "-loop",
+        "1",
         "-i",
         logo_overlay_path,
+        "-loop",
+        "1",
         "-i",
         text_overlay_path,
         "-filter_complex",
         (
+            "[2:v]format=rgba,fade=t=in:st=0:d=0.45:alpha=1[text];"
             f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
-            f"[v1][2:v]overlay=0:{text_y_expr}:format=auto[v]"
+            f"[v1][text]overlay=0:{text_y_expr}:format=auto[v]"
         ),
         "-map",
         "[v]",
@@ -2116,6 +2133,7 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         "192k",
         "-movflags",
         "+faststart",
+        "-shortest",
         output_path,
     ]
     try:
