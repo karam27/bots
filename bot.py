@@ -2089,15 +2089,6 @@ def render_montage_video(input_video_path: str, text: str) -> str:
     create_montage_text_overlay(text_overlay_path, width, height, text)
 
     logo_y = max(24, int(height * 0.04))
-    text_start_y = int(height * 0.79)
-    text_end_y = int(height * 0.73)
-    move_duration = 0.65
-    text_y_expr = (
-        f"if(lt(t\\,{move_duration})\\,"
-        f"{text_start_y}-(({text_start_y}-{text_end_y})*t/{move_duration})\\,"
-        f"{text_end_y})"
-    )
-
     ffmpeg_cmd = [
         ffmpeg_path,
         "-y",
@@ -2115,7 +2106,7 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         (
             "[2:v]format=rgba,fade=t=in:st=0:d=0.45:alpha=1[text];"
             f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
-            f"[v1][text]overlay=0:{text_y_expr}:format=auto[v]"
+            "[v1][text]overlay=0:0:format=auto[v]"
         ),
         "-map",
         "[v]",
