@@ -2081,48 +2081,57 @@ def render_montage_video(input_video_path: str, text: str) -> str:
     text_end_y = int(height * 0.73)
     move_duration = 0.65
     text_y_expr = (
-        f"if(lt(t,{move_duration}),"
-        f"{text_start_y}-(({text_start_y}-{text_end_y})*t/{move_duration}),"
+        f"if(lt(t\\,{move_duration})\\,"
+        f"{text_start_y}-(({text_start_y}-{text_end_y})*t/{move_duration})\\,"
         f"{text_end_y})"
     )
 
-    subprocess.run(
-        [
-            ffmpeg_path,
-            "-y",
-            "-i",
-            input_video_path,
-            "-i",
-            logo_overlay_path,
-            "-i",
-            text_overlay_path,
-            "-filter_complex",
-            (
-                f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
-                f"[v1][2:v]overlay=0:{text_y_expr}:format=auto[v]"
-            ),
-            "-map",
-            "[v]",
-            "-map",
-            "0:a?",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "22",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            output_path,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    ffmpeg_cmd = [
+        ffmpeg_path,
+        "-y",
+        "-i",
+        input_video_path,
+        "-i",
+        logo_overlay_path,
+        "-i",
+        text_overlay_path,
+        "-filter_complex",
+        (
+            f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
+            f"[v1][2:v]overlay=0:{text_y_expr}:format=auto[v]"
+        ),
+        "-map",
+        "[v]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    try:
+        subprocess.run(
+            ffmpeg_cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        if stderr:
+            error_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+            error_text = "\n".join(error_lines[-8:])
+            raise RuntimeError(f"فشل ffmpeg أثناء المونتاج:\n{error_text}") from e
+        raise RuntimeError("فشل ffmpeg أثناء المونتاج بدون رسالة خطأ واضحة.") from e
     return output_path
 
 
