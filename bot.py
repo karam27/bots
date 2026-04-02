@@ -251,6 +251,10 @@ async def show_start_menu(target_message, context: ContextTypes.DEFAULT_TYPE, te
     if not templates:
         prompt = text or "أهلاً بك.\nلا يوجد قوالب حالياً، لكن يمكنك الدخول كمدير لإضافة قالب جديد."
         await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
+        if fixed_stat_word:
+            await update.message.reply_text("Ø£Ø±Ø³Ù„ Ø§Ù„Ø¢Ù† Ø§Ù„Ø¬Ù…Ù„Ø© Ø§Ù„ØªÙŠ Ø³ØªØ¸Ù‡Ø± Ø¨Ø§Ù„Ù„ÙˆÙ† Ø§Ù„Ø£Ø¨ÙŠØ¶ ØªØ­Øª.")
+        else:
+            await update.message.reply_text("Ø£Ø±Ø³Ù„ Ø§Ù„Ø¢Ù† Ø§Ù„ÙƒÙ„Ù…Ø© Ø§Ù„ØªÙŠ Ø³ØªØ¸Ù‡Ø± Ø¯Ø§Ø®Ù„ Ø§Ù„ØµÙ†Ø¯ÙˆÙ‚ Ø§Ù„Ø£Ø²Ø±Ù‚.")
         return
 
     prompt = text or "أهلاً بك.\nاختر طريقة الدخول:"
@@ -1633,9 +1637,20 @@ def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
     if cfg.get("caption_font_bold_path") and not os.path.isfile(cfg["caption_font_bold_path"]):
         return None, f"caption font not found: {cfg['caption_font_bold_path']}"
 
-    image_mode = cfg.get("image_mode", "full")
+    image_mode = str(cfg.get("image_mode", "full") or "full").strip().lower()
+    if image_mode == "cover":
+        image_mode = "full"
+        cfg["image_mode"] = "full"
     if image_mode == "box" and "image_box" not in cfg:
-        return None, "image_mode=box requires image_box"
+        try:
+            with Image.open(cfg["template_path"]) as template_img:
+                width, height = template_img.size
+            fallback_bottom = int(cfg.get("image_area_bottom", int(height * 0.58)))
+            cfg["image_box"] = [0, 0, width, fallback_bottom]
+            cfg["image_mask_box"] = cfg.get("image_mask_box", cfg["image_box"])
+            print(f"[Templates] generated fallback image_box for '{folder}'")
+        except Exception as e:
+            return None, f"image_mode=box requires image_box and fallback failed: {e}"
 
     return cfg, None
 
@@ -1681,9 +1696,20 @@ def load_loose_template_entry(cfg_path: str) -> tuple[Optional[dict], Optional[s
         else:
             cfg["text_box"] = [0, 0, 1, 1]
 
-    image_mode = cfg.get("image_mode", "full")
+    image_mode = str(cfg.get("image_mode", "full") or "full").strip().lower()
+    if image_mode == "cover":
+        image_mode = "full"
+        cfg["image_mode"] = "full"
     if image_mode == "box" and "image_box" not in cfg:
-        return None, "image_mode=box requires image_box"
+        try:
+            with Image.open(cfg["template_path"]) as template_img:
+                width, height = template_img.size
+            fallback_bottom = int(cfg.get("image_area_bottom", int(height * 0.58)))
+            cfg["image_box"] = [0, 0, width, fallback_bottom]
+            cfg["image_mask_box"] = cfg.get("image_mask_box", cfg["image_box"])
+            print(f"[Templates] generated fallback image_box for '{cfg['id']}'")
+        except Exception as e:
+            return None, f"image_mode=box requires image_box and fallback failed: {e}"
 
     return cfg, None
 
@@ -2399,7 +2425,9 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             bottom_padding=int(template_cfg.get("trim_bottom_white_padding", 8)),
         )
 
-    image_mode = template_cfg.get("image_mode", "full")
+    image_mode = str(template_cfg.get("image_mode", "full") or "full").strip().lower()
+    if image_mode == "cover":
+        image_mode = "full"
     top_bias, left_bias, image_zoom = resolve_image_crop_settings(news_img, template_cfg)
 
     if image_mode == "full":
@@ -2409,9 +2437,16 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         canvas.paste(fitted, (0, 0), fitted if fitted.mode == "RGBA" else None)
 
     else:
-        image_box = tuple(template_cfg["image_box"])
+        raw_image_box = template_cfg.get("image_box")
+        raw_mask_box = template_cfg.get("image_mask_box")
+        if not isinstance(raw_image_box, (list, tuple)) or len(raw_image_box) != 4:
+            fallback_bottom = int(template_cfg.get("image_area_bottom", int(H * 0.58)))
+            raw_image_box = [0, 0, W, fallback_bottom]
+        image_box = tuple(int(v) for v in raw_image_box)
         mask_shape = str(template_cfg.get("image_mask_shape", "rectangle")).lower()
-        mask_box = tuple(template_cfg.get("image_mask_box", image_box))
+        if not isinstance(raw_mask_box, (list, tuple)) or len(raw_mask_box) != 4:
+            raw_mask_box = image_box
+        mask_box = tuple(int(v) for v in raw_mask_box)
         image_offset_x = int(template_cfg.get("image_offset_x", 0))
         image_offset_y = int(template_cfg.get("image_offset_y", 0))
 
@@ -2545,6 +2580,9 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         stat_number = stat_segments[0] if len(stat_segments) >= 1 else ""
         stat_word = stat_segments[1] if len(stat_segments) >= 2 else ""
         stat_body = stat_segments[2] if len(stat_segments) >= 3 else ""
+        fixed_stat_word = str(template_cfg.get("stat_word_fixed_text", "") or "").strip()
+        if fixed_stat_word:
+            stat_word = fixed_stat_word
 
         if template_cfg.get("stat_number_box") and stat_number:
             draw_centered_text_block(
@@ -3628,7 +3666,25 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["pending_stat_number"] = value
         context.user_data.pop("awaiting_stat_number", None)
-        context.user_data["awaiting_stat_word"] = True
+        templates = get_templates(context)
+        state = load_admin_state()
+        available_templates = get_enabled_templates(templates, state, context.user_data.get("role"))
+        template_cfg = get_template_cfg(available_templates, context.user_data.get("template_id"))
+        fixed_stat_word = str(template_cfg.get("stat_word_fixed_text", "") or "").strip()
+        if fixed_stat_word:
+            context.user_data["pending_stat_word"] = fixed_stat_word
+            context.user_data["awaiting_stat_body"] = True
+        else:
+            context.user_data["awaiting_stat_word"] = True
+        if fixed_stat_word:
+            await update.message.reply_text(
+                "\u0623\u0631\u0633\u0644 \u0627\u0644\u0622\u0646 \u0627\u0644\u062c\u0645\u0644\u0629 \u0627\u0644\u062a\u064a "
+                "\u0633\u062a\u0638\u0647\u0631 \u0628\u0627\u0644\u0644\u0648\u0646 \u0627\u0644\u0623\u0628\u064a\u0636 \u062a\u062d\u062a."
+            )
+            return
+        if fixed_stat_word:
+            await update.message.reply_text("Ø£Ø±Ø³Ù„ Ø§Ù„Ø¢Ù† Ø§Ù„Ø¬Ù…Ù„Ø© Ø§Ù„ØªÙŠ Ø³ØªØ¸Ù‡Ø± Ø¨Ø§Ù„Ù„ÙˆÙ† Ø§Ù„Ø£Ø¨ÙŠØ¶ ØªØ­Øª.")
+            return
         await update.message.reply_text("أرسل الآن الكلمة التي ستظهر داخل الصندوق الأزرق.")
         return
 
