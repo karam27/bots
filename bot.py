@@ -283,6 +283,7 @@ async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE
 def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
     keep_keys = {
         "role",
+        "awaiting_admin_password",
         "awaiting_max_employees",
         "awaiting_new_template_name",
         "awaiting_new_template_image",
@@ -306,6 +307,8 @@ def clear_obsolete_auth_state(context: ContextTypes.DEFAULT_TYPE):
     stale_keys = []
     for key in list(context.user_data.keys()):
         lowered = str(key).lower()
+        if lowered == "awaiting_admin_password":
+            continue
         if any(token in lowered for token in ("password", "passcode", "login", "auth")):
             stale_keys.append(key)
     for key in stale_keys:
@@ -3203,15 +3206,9 @@ async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     if role == "admin":
-        context.user_data["role"] = "admin"
         clear_obsolete_auth_state(context)
-        templates = get_templates(context, force_reload=True)
-        state = load_admin_state()
-        await q.edit_message_text("تم تسجيلك كمدير.")
-        await q.message.reply_text(
-            admin_status_text(state, templates),
-            reply_markup=admin_menu_keyboard(),
-        )
+        context.user_data["awaiting_admin_password"] = True
+        await q.edit_message_text("أرسل كلمة سر المدير.")
         return
 
     state = load_admin_state()
@@ -3614,6 +3611,23 @@ async def handle_image_document_v2(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_admin_password"):
+        value = update.message.text.strip()
+        state = load_admin_state()
+        if value != str(state.get("admin_password", ADMIN_PASSWORD)):
+            await update.message.reply_text("كلمة السر غير صحيحة.")
+            return
+
+        context.user_data.pop("awaiting_admin_password", None)
+        context.user_data["role"] = "admin"
+        templates = get_templates(context, force_reload=True)
+        await update.message.reply_text("تم تسجيلك كمدير.")
+        await update.message.reply_text(
+            admin_status_text(state, templates),
+            reply_markup=admin_menu_keyboard(),
+        )
+        return
+
     clear_obsolete_auth_state(context)
 
     if context.user_data.get("awaiting_new_template_name"):
