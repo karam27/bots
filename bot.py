@@ -9,6 +9,7 @@ import shutil
 import base64
 import urllib.request
 import urllib.error
+import traceback
 from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
@@ -20,7 +21,7 @@ from bidi.algorithm import get_display
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest
+from telegram.error import BadRequest, InvalidToken, NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -46,6 +47,45 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_TEMPLATE_MODEL = os.getenv("OPENAI_TEMPLATE_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
+TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "").strip()
+TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip()
+TELEGRAM_BASE_FILE_URL = os.getenv("TELEGRAM_BASE_FILE_URL", "").strip()
+BOT_ERROR_LOG_PATH = os.path.join(BASE_DIR, "bot.err.log")
+
+
+def safe_console_print(message: str):
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        print(message.encode("ascii", errors="replace").decode("ascii"))
+
+
+def write_startup_error_log(message: str, exc: Exception):
+    try:
+        with open(BOT_ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write("=" * 80 + "\n")
+            f.write(message + "\n")
+            f.write(traceback.format_exc())
+            f.write("\n")
+    except Exception:
+        pass
+
+
+def build_startup_error_message(exc: Exception) -> str:
+    if isinstance(exc, InvalidToken):
+        return "Startup failed: BOT_TOKEN is invalid. Check BOT_TOKEN in .env"
+    if isinstance(exc, TimedOut):
+        return (
+            "Startup failed: connection to Telegram API timed out. "
+            "Check server network access or set TELEGRAM_PROXY_URL / TELEGRAM_BASE_URL in .env"
+        )
+    if isinstance(exc, NetworkError):
+        return (
+            "Startup failed: unable to reach Telegram API. "
+            "The server likely cannot reach api.telegram.org or requires a proxy. "
+            "Set TELEGRAM_PROXY_URL or TELEGRAM_BASE_URL in .env if needed"
+        )
+    return f"Startup failed: {exc}"
 
 
 # ===================== Admin / Employee State =====================
@@ -4185,15 +4225,23 @@ def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not set in .env")
 
-    app = (
+    builder = (
         Application.builder()
         .token(BOT_TOKEN)
         .read_timeout(60)
         .write_timeout(60)
         .connect_timeout(30)
         .pool_timeout(30)
-        .build()
     )
+
+    if TELEGRAM_PROXY_URL:
+        builder = builder.proxy(TELEGRAM_PROXY_URL).get_updates_proxy(TELEGRAM_PROXY_URL)
+    if TELEGRAM_BASE_URL:
+        builder = builder.base_url(TELEGRAM_BASE_URL)
+    if TELEGRAM_BASE_FILE_URL:
+        builder = builder.base_file_url(TELEGRAM_BASE_FILE_URL)
+
+    app = builder.build()
 
     app.add_handler(CommandHandler("start", start_v2))
     app.add_handler(CommandHandler("templates", templates_cmd_v2))
@@ -4214,8 +4262,18 @@ def main():
     print("TEMPLATES_DIR:", TEMPLATES_DIR)
     print("OS:", os.name)
     print("PILLOW_HAS_RAQM:", PILLOW_HAS_RAQM)
+    if TELEGRAM_PROXY_URL:
+        print("TELEGRAM_PROXY_URL: configured")
+    if TELEGRAM_BASE_URL:
+        print("TELEGRAM_BASE_URL:", TELEGRAM_BASE_URL)
     print("Bot is running...")
-    app.run_polling(close_loop=False)
+    try:
+        app.run_polling(close_loop=False)
+    except Exception as exc:
+        message = build_startup_error_message(exc)
+        safe_console_print(message)
+        write_startup_error_log(message, exc)
+        raise
 
 
 if __name__ == "__main__":
