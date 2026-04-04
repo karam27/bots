@@ -62,7 +62,7 @@ httpx.ConnectError: All connection attempts failed
 The above exception was the direct cause of the following exception:
 
 Traceback (most recent call last):
-  File "C:\Users\CompuLife\Desktop\news_bot\bot.py", line 4271, in main
+  File "C:\Users\CompuLife\Desktop\news_bot\bot.py", line 4280, in main
     app.run_polling(close_loop=False)
   File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\telegram\ext\_application.py", line 881, in run_polling
     return self.__run(

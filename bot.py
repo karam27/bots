@@ -10,6 +10,7 @@ import base64
 import urllib.request
 import urllib.error
 import traceback
+import time
 from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
@@ -50,6 +51,7 @@ OPENAI_TEMPLATE_MODEL = os.getenv("OPENAI_TEMPLATE_MODEL", "gpt-4.1-mini").strip
 TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "").strip()
 TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip()
 TELEGRAM_BASE_FILE_URL = os.getenv("TELEGRAM_BASE_FILE_URL", "").strip()
+STARTUP_RETRY_SECONDS = max(5, int(os.getenv("STARTUP_RETRY_SECONDS", "20") or "20"))
 BOT_ERROR_LOG_PATH = os.path.join(BASE_DIR, "bot.err.log")
 
 
@@ -2056,8 +2058,10 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
-    max_width = int(width * 0.84)
-    font_size = max(44, int(width * 0.075))
+    max_text_width = int(width * 0.8)
+    min_band_width = int(width * 0.7)
+    max_band_width = int(width * 0.9)
+    font_size = max(42, int(width * 0.07))
     min_font_size = max(24, int(width * 0.034))
 
     cleaned = clean_text_safe(text)
@@ -2065,35 +2069,38 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     font = ImageFont.truetype(font_path, font_size)
     while font_size >= min_font_size:
         font = ImageFont.truetype(font_path, font_size)
-        lines = wrap_text_to_width(draw, cleaned, font, max_width)
-        if len(lines) <= 3:
+        lines = wrap_text_to_width(draw, cleaned, font, max_text_width)
+        if len(lines) <= 4:
             widths = [text_bbox(draw, line, font)[0] for line in lines]
-            if (max(widths) if widths else 0) <= max_width:
+            if (max(widths) if widths else 0) <= max_text_width:
                 break
         font_size -= 2
 
-    spacing = max(10, int(font_size * 0.18))
+    spacing = max(10, int(font_size * 0.2))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    y = int(height * 0.76 - total_h / 2)
-    pad_x = max(26, int(width * 0.035))
-    pad_y = max(18, int(height * 0.018))
-    band_left = int((width - max_width) / 2) - pad_x
-    band_right = width - band_left
+    y = int(height * 0.78 - total_h / 2)
+    pad_x = max(28, int(width * 0.045))
+    pad_y = max(20, int(height * 0.022))
+    text_widths = [text_bbox(draw, line, font)[0] for line in lines]
+    content_width = max(text_widths) if text_widths else 0
+    band_width = min(max(content_width + pad_x * 2, min_band_width), max_band_width)
+    band_left = int((width - band_width) / 2)
+    band_right = band_left + band_width
     band_top = y - pad_y
     band_bottom = y + total_h + pad_y
-    radius = max(18, int(height * 0.022))
+    radius = max(22, int(height * 0.028))
     draw.rounded_rectangle(
         (band_left, band_top, band_right, band_bottom),
         radius=radius,
-        fill=(10, 14, 18, 90),
+        fill=(12, 15, 18, 180),
     )
 
     for line in lines:
         rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
         wpx, hpx = text_bbox(draw, line, font)
         x = int((width - wpx) / 2)
-        draw.text((x + 4, y + 5), rendered_text, font=font, fill=(0, 0, 0, 170), **draw_kwargs)
+        draw.text((x + 3, y + 4), rendered_text, font=font, fill=(0, 0, 0, 160), **draw_kwargs)
         draw.text((x, y), rendered_text, font=font, fill=(255, 255, 255, 255), **draw_kwargs)
         y += hpx + spacing
 
@@ -4226,56 +4233,64 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not set in .env")
+    while True:
+        builder = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .read_timeout(60)
+            .write_timeout(60)
+            .connect_timeout(30)
+            .pool_timeout(30)
+        )
 
-    builder = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .read_timeout(60)
-        .write_timeout(60)
-        .connect_timeout(30)
-        .pool_timeout(30)
-    )
+        if TELEGRAM_PROXY_URL:
+            builder = builder.proxy(TELEGRAM_PROXY_URL).get_updates_proxy(TELEGRAM_PROXY_URL)
+        if TELEGRAM_BASE_URL:
+            builder = builder.base_url(TELEGRAM_BASE_URL)
+        if TELEGRAM_BASE_FILE_URL:
+            builder = builder.base_file_url(TELEGRAM_BASE_FILE_URL)
 
-    if TELEGRAM_PROXY_URL:
-        builder = builder.proxy(TELEGRAM_PROXY_URL).get_updates_proxy(TELEGRAM_PROXY_URL)
-    if TELEGRAM_BASE_URL:
-        builder = builder.base_url(TELEGRAM_BASE_URL)
-    if TELEGRAM_BASE_FILE_URL:
-        builder = builder.base_file_url(TELEGRAM_BASE_FILE_URL)
+        app = builder.build()
 
-    app = builder.build()
+        app.add_handler(CommandHandler("start", start_v2))
+        app.add_handler(CommandHandler("templates", templates_cmd_v2))
+        app.add_handler(CallbackQueryHandler(role_cb_v2, pattern=r"^role:"))
+        app.add_handler(CallbackQueryHandler(mode_cb_v2, pattern=r"^mode:"))
+        app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
+        app.add_handler(CallbackQueryHandler(nav_cb_v2, pattern=r"^nav:"))
+        app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
+        app.add_handler(CallbackQueryHandler(admin_template_delete_cb_v2, pattern=r"^admin_tpl_del:"))
+        app.add_handler(CallbackQueryHandler(admin_template_delete_confirm_cb_v2, pattern=r"^admin_tpl_del_confirm:"))
+        app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
+        app.add_handler(MessageHandler(filters.VIDEO, handle_video_v2))
+        app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
+        app.add_handler(MessageHandler(filters.Document.ALL, handle_image_document_v2))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_v2))
 
-    app.add_handler(CommandHandler("start", start_v2))
-    app.add_handler(CommandHandler("templates", templates_cmd_v2))
-    app.add_handler(CallbackQueryHandler(role_cb_v2, pattern=r"^role:"))
-    app.add_handler(CallbackQueryHandler(mode_cb_v2, pattern=r"^mode:"))
-    app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
-    app.add_handler(CallbackQueryHandler(nav_cb_v2, pattern=r"^nav:"))
-    app.add_handler(CallbackQueryHandler(admin_template_toggle_cb_v2, pattern=r"^admin_tpl:"))
-    app.add_handler(CallbackQueryHandler(admin_template_delete_cb_v2, pattern=r"^admin_tpl_del:"))
-    app.add_handler(CallbackQueryHandler(admin_template_delete_confirm_cb_v2, pattern=r"^admin_tpl_del_confirm:"))
-    app.add_handler(CallbackQueryHandler(choose_template_cb_v2, pattern=r"^tpl:"))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video_v2))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo_v2))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_image_document_v2))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_v2))
-
-    print("BASE_DIR:", BASE_DIR)
-    print("TEMPLATES_DIR:", TEMPLATES_DIR)
-    print("OS:", os.name)
-    print("PILLOW_HAS_RAQM:", PILLOW_HAS_RAQM)
-    if TELEGRAM_PROXY_URL:
-        print("TELEGRAM_PROXY_URL: configured")
-    if TELEGRAM_BASE_URL:
-        print("TELEGRAM_BASE_URL:", TELEGRAM_BASE_URL)
-    print("Bot is running...")
-    try:
-        app.run_polling(close_loop=False)
-    except Exception as exc:
-        message = build_startup_error_message(exc)
-        safe_console_print(message)
-        write_startup_error_log(message, exc)
-        raise
+        print("BASE_DIR:", BASE_DIR)
+        print("TEMPLATES_DIR:", TEMPLATES_DIR)
+        print("OS:", os.name)
+        print("PILLOW_HAS_RAQM:", PILLOW_HAS_RAQM)
+        if TELEGRAM_PROXY_URL:
+            print("TELEGRAM_PROXY_URL: configured")
+        if TELEGRAM_BASE_URL:
+            print("TELEGRAM_BASE_URL:", TELEGRAM_BASE_URL)
+        print("Bot is running...")
+        try:
+            app.run_polling(close_loop=False)
+            return
+        except Exception as exc:
+            message = build_startup_error_message(exc)
+            safe_console_print(message)
+            write_startup_error_log(message, exc)
+            if isinstance(exc, InvalidToken):
+                raise
+            retry_message = (
+                f"Retrying bot startup in {STARTUP_RETRY_SECONDS} seconds. "
+                "Set TELEGRAM_PROXY_URL in .env if this server needs a proxy."
+            )
+            safe_console_print(retry_message)
+            time.sleep(STARTUP_RETRY_SECONDS)
 
 
 if __name__ == "__main__":
