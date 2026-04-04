@@ -2054,14 +2054,37 @@ def wrap_text_to_width(draw, text: str, font, max_width: int) -> List[str]:
     return lines
 
 
+def split_text_to_two_lines(draw, text: str, font, max_width: int) -> List[str]:
+    words = [w for w in text.split() if w.strip()]
+    if not words:
+        return [""]
+    if len(words) == 1:
+        return [words[0]]
+
+    best_lines = [" ".join(words)]
+    best_score = None
+    for idx in range(1, len(words)):
+        first = " ".join(words[:idx]).strip()
+        second = " ".join(words[idx:]).strip()
+        first_w, _ = text_bbox(draw, first, font)
+        second_w, _ = text_bbox(draw, second, font)
+        max_line_width = max(first_w, second_w)
+        overflow = max(0, max_line_width - max_width)
+        balance_penalty = abs(first_w - second_w)
+        score = (overflow * 1000) + balance_penalty + max_line_width
+        if best_score is None or score < best_score:
+            best_score = score
+            best_lines = [first, second]
+    return best_lines
+
+
 def create_montage_text_overlay(output_path: str, width: int, height: int, text: str):
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
-    max_text_width = int(width * 0.8)
-    min_band_width = int(width * 0.7)
-    max_band_width = int(width * 0.9)
-    font_size = max(42, int(width * 0.07))
+    side_margin = max(20, int(width * 0.045))
+    max_text_width = width - side_margin * 2 - max(28, int(width * 0.06)) * 2
+    font_size = max(40, int(width * 0.066))
     min_font_size = max(24, int(width * 0.034))
 
     cleaned = clean_text_safe(text)
@@ -2069,31 +2092,39 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     font = ImageFont.truetype(font_path, font_size)
     while font_size >= min_font_size:
         font = ImageFont.truetype(font_path, font_size)
-        lines = wrap_text_to_width(draw, cleaned, font, max_text_width)
-        if len(lines) <= 4:
-            widths = [text_bbox(draw, line, font)[0] for line in lines]
-            if (max(widths) if widths else 0) <= max_text_width:
-                break
+        lines = split_text_to_two_lines(draw, cleaned, font, max_text_width)
+        widths = [text_bbox(draw, line, font)[0] for line in lines]
+        if (max(widths) if widths else 0) <= max_text_width:
+            break
         font_size -= 2
 
-    spacing = max(10, int(font_size * 0.2))
+    spacing = max(8, int(font_size * 0.18))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    y = int(height * 0.78 - total_h / 2)
-    pad_x = max(28, int(width * 0.045))
-    pad_y = max(20, int(height * 0.022))
-    text_widths = [text_bbox(draw, line, font)[0] for line in lines]
-    content_width = max(text_widths) if text_widths else 0
-    band_width = min(max(content_width + pad_x * 2, min_band_width), max_band_width)
-    band_left = int((width - band_width) / 2)
-    band_right = band_left + band_width
-    band_top = y - pad_y
-    band_bottom = y + total_h + pad_y
-    radius = max(22, int(height * 0.028))
+    pad_x = max(28, int(width * 0.06))
+    pad_y = max(18, int(height * 0.02))
+    band_left = side_margin
+    band_right = width - side_margin
+    band_bottom = height - max(26, int(height * 0.055))
+    band_top = band_bottom - total_h - pad_y * 2
+    y = band_top + pad_y
+    radius = max(18, int(height * 0.022))
+
+    # Soft shadow under the banner so it reads clearly over bright footage.
+    shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle(
+        (band_left, band_top + 8, band_right, band_bottom + 8),
+        radius=radius,
+        fill=(0, 0, 0, 90),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(8, int(height * 0.01))))
+    canvas.alpha_composite(shadow)
+
     draw.rounded_rectangle(
         (band_left, band_top, band_right, band_bottom),
         radius=radius,
-        fill=(12, 15, 18, 180),
+        fill=(8, 10, 12, 225),
     )
 
     for line in lines:

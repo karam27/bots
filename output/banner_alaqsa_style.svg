@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">Banner styled like the provided reference</title>
+  <desc id="desc">Two-line Arabic banner with a yellow top bar and light gray bottom bar.</desc>
+
+  <rect x="0" y="0" width="1280" height="320" fill="none"/>
+
+  <rect x="160" y="62" width="960" height="94" fill="#FFE200"/>
+  <rect x="160" y="156" width="960" height="94" fill="#D9D9D9"/>
+
+  <text
+    x="640"
+    y="123"
+    text-anchor="middle"
+    direction="rtl"
+    unicode-bidi="plaintext"
+    font-family="'Noto Kufi Arabic', 'Arial', sans-serif"
+    font-size="74"
+    font-weight="800"
+    fill="#000000">إطلالة</text>
+
+  <text
+    x="640"
+    y="219"
+    text-anchor="middle"
+    direction="rtl"
+    unicode-bidi="plaintext"
+    font-family="'Noto Kufi Arabic', 'Arial', sans-serif"
+    font-size="70"
+    font-weight="800"
+    fill="#000000">على الأقصى</text>
+</svg>
