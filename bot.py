@@ -2154,6 +2154,8 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         "0:a?",
         "-c:v",
         "libx264",
+        "-pix_fmt",
+        "yuv420p",
         "-preset",
         "veryfast",
         "-crf",
