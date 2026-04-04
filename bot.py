@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import os
 import json
 import re
@@ -22,7 +23,7 @@ from bidi.algorithm import get_display
 
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest, InvalidToken, NetworkError, TimedOut
+from telegram.error import BadRequest, Conflict, InvalidToken, NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -51,8 +52,12 @@ OPENAI_TEMPLATE_MODEL = os.getenv("OPENAI_TEMPLATE_MODEL", "gpt-4.1-mini").strip
 TELEGRAM_PROXY_URL = os.getenv("TELEGRAM_PROXY_URL", "").strip()
 TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip()
 TELEGRAM_BASE_FILE_URL = os.getenv("TELEGRAM_BASE_FILE_URL", "").strip()
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", "").strip()
+FFPROBE_PATH = os.getenv("FFPROBE_PATH", "").strip()
 STARTUP_RETRY_SECONDS = max(5, int(os.getenv("STARTUP_RETRY_SECONDS", "20") or "20"))
 BOT_ERROR_LOG_PATH = os.path.join(BASE_DIR, "bot.err.log")
+BOT_LOCK_PATH = os.path.join(BASE_DIR, "bot.lock")
+BOT_LOCK_FD: Optional[int] = None
 
 
 def safe_console_print(message: str):
@@ -76,6 +81,11 @@ def write_startup_error_log(message: str, exc: Exception):
 def build_startup_error_message(exc: Exception) -> str:
     if isinstance(exc, InvalidToken):
         return "Startup failed: BOT_TOKEN is invalid. Check BOT_TOKEN in .env"
+    if isinstance(exc, Conflict):
+        return (
+            "Startup failed: another Telegram polling client is already using this BOT_TOKEN. "
+            "Stop the other bot instance or rotate BOT_TOKEN in .env."
+        )
     if isinstance(exc, TimedOut):
         return (
             "Startup failed: connection to Telegram API timed out. "
@@ -88,6 +98,35 @@ def build_startup_error_message(exc: Exception) -> str:
             "Set TELEGRAM_PROXY_URL or TELEGRAM_BASE_URL in .env if needed"
         )
     return f"Startup failed: {exc}"
+
+
+def release_bot_lock():
+    global BOT_LOCK_FD
+    if BOT_LOCK_FD is None:
+        return
+    try:
+        os.close(BOT_LOCK_FD)
+    except OSError:
+        pass
+    BOT_LOCK_FD = None
+    try:
+        if os.path.exists(BOT_LOCK_PATH):
+            os.remove(BOT_LOCK_PATH)
+    except OSError:
+        pass
+
+
+def acquire_bot_lock():
+    global BOT_LOCK_FD
+    try:
+        BOT_LOCK_FD = os.open(BOT_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise RuntimeError(
+            "Another local bot process is already holding bot.lock. "
+            "Stop it or delete bot.lock if it is stale."
+        ) from exc
+    os.write(BOT_LOCK_FD, str(os.getpid()).encode("ascii", errors="ignore"))
+    atexit.register(release_bot_lock)
 
 
 # ===================== Admin / Employee State =====================
@@ -1998,7 +2037,9 @@ async def send_rendered_post(
 
 
 def get_ffmpeg_paths() -> tuple[Optional[str], Optional[str]]:
-    return shutil.which("ffmpeg"), shutil.which("ffprobe")
+    ffmpeg_path = FFMPEG_PATH if FFMPEG_PATH and os.path.isfile(FFMPEG_PATH) else shutil.which("ffmpeg")
+    ffprobe_path = FFPROBE_PATH if FFPROBE_PATH and os.path.isfile(FFPROBE_PATH) else shutil.which("ffprobe")
+    return ffmpeg_path, ffprobe_path
 
 
 def get_default_montage_logo_path() -> Optional[str]:
@@ -2082,13 +2123,24 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
-    side_margin = max(32, int(width * 0.14))
-    inner_pad_x = max(20, int(width * 0.04))
+    side_margin = max(24, int(width * 0.10))
+    inner_pad_x = max(18, int(width * 0.035))
     max_text_width = width - side_margin * 2 - inner_pad_x * 2
-    font_size = max(40, int(width * 0.062))
-    min_font_size = max(24, int(width * 0.034))
 
     cleaned = clean_text_safe(text)
+    words = [word for word in cleaned.split() if word.strip()]
+    word_count = len(words)
+
+    if word_count <= 2:
+        font_size = max(62, int(width * 0.102))
+    elif word_count <= 4:
+        font_size = max(56, int(width * 0.088))
+    elif word_count <= 6:
+        font_size = max(50, int(width * 0.076))
+    else:
+        font_size = max(42, int(width * 0.064))
+
+    min_font_size = max(26, int(font_size * 0.58))
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
     while font_size >= min_font_size:
@@ -2103,18 +2155,20 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     max_line_height = max(heights) if heights else font_size
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    pad_y = max(10, int(height * 0.012))
+    pad_y = max(10, int(height * 0.01))
     band_left = side_margin
     band_right = width - side_margin
-    band_bottom = height - max(26, int(height * 0.055))
-    band_height = max(int(max_line_height * 2.25), total_h + pad_y * 2)
-    band_top = band_bottom - band_height
-    split_y = band_top + int(band_height * 0.53)
+    band_height = max(int(max_line_height * 2.15), total_h + pad_y * 2)
+    band_top = max(22, int(((height - band_height) / 2) + (height * 0.20)))
+    band_bottom = min(height - 20, band_top + band_height)
+    band_height = band_bottom - band_top
+    split_ratio = 0.54 if len(lines) == 2 else 0.50
+    split_y = band_top + int(band_height * split_ratio)
 
     # Keep a soft shadow so the flat banner remains readable over bright footage.
     shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rectangle((band_left, band_top + 8, band_right, band_bottom + 8), fill=(0, 0, 0, 90))
+    shadow_draw.rectangle((band_left, band_top + 6, band_right, band_bottom + 6), fill=(0, 0, 0, 90))
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(8, int(height * 0.01))))
     canvas.alpha_composite(shadow)
 
@@ -2127,7 +2181,7 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     for idx, line in enumerate(lines):
         rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
         wpx, hpx = text_bbox(draw, line, font)
-        x = int((width - wpx) / 2)
+        x = int(resolve_text_x_in_box(draw, line, font, band_left, band_right, align="center"))
         shadow_offset = max(1, int(font_size * 0.035))
         text_y = y
         if len(lines) == 2:
@@ -4268,6 +4322,7 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not set in .env")
+    acquire_bot_lock()
     while True:
         builder = (
             Application.builder()
@@ -4318,7 +4373,7 @@ def main():
             message = build_startup_error_message(exc)
             safe_console_print(message)
             write_startup_error_log(message, exc)
-            if isinstance(exc, InvalidToken):
+            if isinstance(exc, (Conflict, InvalidToken)):
                 raise
             retry_message = (
                 f"Retrying bot startup in {STARTUP_RETRY_SECONDS} seconds. "
