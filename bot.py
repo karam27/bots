@@ -2082,9 +2082,10 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
     font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
-    side_margin = max(20, int(width * 0.045))
-    max_text_width = width - side_margin * 2 - max(28, int(width * 0.06)) * 2
-    font_size = max(40, int(width * 0.066))
+    side_margin = max(32, int(width * 0.14))
+    inner_pad_x = max(20, int(width * 0.04))
+    max_text_width = width - side_margin * 2 - inner_pad_x * 2
+    font_size = max(40, int(width * 0.062))
     min_font_size = max(24, int(width * 0.034))
 
     cleaned = clean_text_safe(text)
@@ -2100,39 +2101,42 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
 
     spacing = max(8, int(font_size * 0.18))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
+    max_line_height = max(heights) if heights else font_size
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    pad_x = max(28, int(width * 0.06))
-    pad_y = max(18, int(height * 0.02))
+    pad_y = max(10, int(height * 0.012))
     band_left = side_margin
     band_right = width - side_margin
     band_bottom = height - max(26, int(height * 0.055))
-    band_top = band_bottom - total_h - pad_y * 2
-    y = band_top + pad_y
-    radius = max(18, int(height * 0.022))
+    band_height = max(int(max_line_height * 2.25), total_h + pad_y * 2)
+    band_top = band_bottom - band_height
+    split_y = band_top + int(band_height * 0.53)
 
-    # Soft shadow under the banner so it reads clearly over bright footage.
+    # Keep a soft shadow so the flat banner remains readable over bright footage.
     shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle(
-        (band_left, band_top + 8, band_right, band_bottom + 8),
-        radius=radius,
-        fill=(0, 0, 0, 90),
-    )
+    shadow_draw.rectangle((band_left, band_top + 8, band_right, band_bottom + 8), fill=(0, 0, 0, 90))
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(8, int(height * 0.01))))
     canvas.alpha_composite(shadow)
 
-    draw.rounded_rectangle(
-        (band_left, band_top, band_right, band_bottom),
-        radius=radius,
-        fill=(8, 10, 12, 225),
-    )
+    draw.rectangle((band_left, band_top, band_right, split_y), fill=(255, 226, 0, 245))
+    draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(217, 217, 217, 245))
 
-    for line in lines:
+    total_text_h = sum(heights) + spacing * max(0, len(lines) - 1)
+    y = band_top + int((band_height - total_text_h) / 2) - max(2, int(height * 0.002))
+
+    for idx, line in enumerate(lines):
         rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
         wpx, hpx = text_bbox(draw, line, font)
         x = int((width - wpx) / 2)
-        draw.text((x + 3, y + 4), rendered_text, font=font, fill=(0, 0, 0, 160), **draw_kwargs)
-        draw.text((x, y), rendered_text, font=font, fill=(255, 255, 255, 255), **draw_kwargs)
+        shadow_offset = max(1, int(font_size * 0.035))
+        text_y = y
+        if len(lines) == 2:
+            if idx == 0:
+                text_y = band_top + int((split_y - band_top - hpx) / 2) - max(1, int(height * 0.002))
+            else:
+                text_y = split_y + int((band_bottom - split_y - hpx) / 2) - max(1, int(height * 0.002))
+        draw.text((x + shadow_offset, text_y + shadow_offset), rendered_text, font=font, fill=(0, 0, 0, 70), **draw_kwargs)
+        draw.text((x, text_y), rendered_text, font=font, fill=(0, 0, 0, 255), **draw_kwargs)
         y += hpx + spacing
 
     canvas.save(output_path, format="PNG")
