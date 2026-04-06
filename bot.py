@@ -2186,7 +2186,7 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
     side_margin = max(80, int(width * 0.18))
-    inner_pad_x = max(18, int(width * 0.028))
+    inner_pad_x = max(12, int(width * 0.020))
     max_text_width = width - side_margin * 2 - inner_pad_x * 2
 
     cleaned = clean_text_safe(text)
@@ -2194,15 +2194,15 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     word_count = len(words)
 
     if word_count <= 2:
-        font_size = max(44, int(width * 0.070))
+        font_size = max(52, int(width * 0.082))
     elif word_count <= 4:
-        font_size = max(40, int(width * 0.064))
+        font_size = max(46, int(width * 0.072))
     elif word_count <= 6:
-        font_size = max(36, int(width * 0.058))
+        font_size = max(40, int(width * 0.062))
     else:
-        font_size = max(32, int(width * 0.050))
+        font_size = max(34, int(width * 0.054))
 
-    min_font_size = max(20, int(font_size * 0.58))
+    min_font_size = max(22, int(font_size * 0.60))
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
     fixed_band_height = max(92, int(height * 0.125))
@@ -2221,12 +2221,12 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
         top_h = heights[0] if heights else 0
         bottom_h = heights[1] if len(heights) > 1 else 0
         width_ok = (max(widths) if widths else 0) <= max_text_width
-        height_ok = top_h <= max(1, top_box_height - 14) and bottom_h <= max(1, bottom_box_height - 14)
+        height_ok = top_h <= max(1, top_box_height - 10) and bottom_h <= max(1, bottom_box_height - 10)
         if width_ok and height_ok:
             break
         font_size -= 2
 
-    spacing = max(6, int(font_size * 0.12))
+    spacing = max(4, int(font_size * 0.08))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     max_line_height = max(heights) if heights else font_size
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
