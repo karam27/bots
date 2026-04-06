@@ -2179,9 +2179,9 @@ def split_text_to_two_lines(draw, text: str, font, max_width: int) -> List[str]:
     return best_lines
 
 
-def create_montage_text_overlay(output_path: str, width: int, height: int, text: str):
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
+def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, width: int, height: int, text: str):
+    measure_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(measure_canvas)
     montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
@@ -2227,15 +2227,25 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     split_ratio = 0.54 if len(lines) == 2 else 0.50
     split_y = band_top + int(band_height * split_ratio)
 
-    # Keep a soft shadow so the flat banner remains readable over bright footage.
-    shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rectangle((band_left, band_top + 6, band_right, band_bottom + 6), fill=(0, 0, 0, 90))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(8, int(height * 0.01))))
-    canvas.alpha_composite(shadow)
+    top_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    top_draw = ImageDraw.Draw(top_canvas)
+    bottom_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    bottom_draw = ImageDraw.Draw(bottom_canvas)
 
-    draw.rectangle((band_left, band_top, band_right, split_y), fill=(255, 226, 0, 245))
-    draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(255, 255, 255, 245))
+    # Keep a soft shadow so the flat banner remains readable over bright footage.
+    shadow_blur = max(8, int(height * 0.01))
+    top_shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    top_shadow_draw = ImageDraw.Draw(top_shadow)
+    top_shadow_draw.rectangle((band_left, band_top + 6, band_right, split_y + 6), fill=(0, 0, 0, 90))
+    top_canvas.alpha_composite(top_shadow.filter(ImageFilter.GaussianBlur(radius=shadow_blur)))
+
+    bottom_shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    bottom_shadow_draw = ImageDraw.Draw(bottom_shadow)
+    bottom_shadow_draw.rectangle((band_left, split_y + 6, band_right, band_bottom + 6), fill=(0, 0, 0, 90))
+    bottom_canvas.alpha_composite(bottom_shadow.filter(ImageFilter.GaussianBlur(radius=shadow_blur)))
+
+    top_draw.rectangle((band_left, band_top, band_right, split_y), fill=(255, 226, 0, 245))
+    bottom_draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(255, 255, 255, 245))
 
     total_text_h = sum(heights) + spacing * max(0, len(lines) - 1)
     y = band_top + int((band_height - total_text_h) / 2) - max(2, int(height * 0.002))
@@ -2251,11 +2261,13 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
                 text_y = band_top + int((split_y - band_top - hpx) / 2) - max(1, int(height * 0.002))
             else:
                 text_y = split_y + int((band_bottom - split_y - hpx) / 2) - max(1, int(height * 0.002))
-        draw.text((x + shadow_offset, text_y + shadow_offset), rendered_text, font=font, fill=(0, 0, 0, 70), **draw_kwargs)
-        draw.text((x, text_y), rendered_text, font=font, fill=(0, 0, 0, 255), **draw_kwargs)
+        target_draw = top_draw if idx == 0 else bottom_draw
+        target_draw.text((x + shadow_offset, text_y + shadow_offset), rendered_text, font=font, fill=(0, 0, 0, 70), **draw_kwargs)
+        target_draw.text((x, text_y), rendered_text, font=font, fill=(0, 0, 0, 255), **draw_kwargs)
         y += hpx + spacing
 
-    canvas.save(output_path, format="PNG")
+    top_canvas.save(top_output_path, format="PNG")
+    bottom_canvas.save(bottom_output_path, format="PNG")
 
 
 def create_resized_logo_overlay(output_path: str, width: int):
@@ -2280,17 +2292,21 @@ def render_montage_video(input_video_path: str, text: str) -> str:
     width, height = get_video_dimensions(ffprobe_path, input_video_path)
     work_dir = tempfile.mkdtemp(prefix="montage_", dir=BASE_DIR)
     logo_overlay_path = os.path.join(work_dir, "logo_overlay.png")
-    text_overlay_path = os.path.join(work_dir, "text_overlay.png")
+    top_text_overlay_path = os.path.join(work_dir, "text_overlay_top.png")
+    bottom_text_overlay_path = os.path.join(work_dir, "text_overlay_bottom.png")
     output_path = os.path.join(work_dir, "montage_output.mp4")
 
     create_resized_logo_overlay(logo_overlay_path, width)
-    create_montage_text_overlay(text_overlay_path, width, height, text)
+    create_montage_text_overlays(top_text_overlay_path, bottom_text_overlay_path, width, height, text)
 
     logo_x = max(24, width - max(180, int(width * 0.24)) - int(width * 0.08))
     logo_y = max(24, int(height * 0.23))
     text_visible_seconds = 4.0
+    text_stagger_delay = 0.18
     text_fade_duration = 0.45
     text_fade_out_start = max(0.0, text_visible_seconds - text_fade_duration)
+    bottom_visible_seconds = max(0.0, text_visible_seconds - text_stagger_delay)
+    bottom_fade_out_start = max(text_stagger_delay, text_visible_seconds - text_fade_duration)
     ffmpeg_cmd = [
         ffmpeg_path,
         "-y",
@@ -2303,13 +2319,20 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         "-loop",
         "1",
         "-i",
-        text_overlay_path,
+        top_text_overlay_path,
+        "-loop",
+        "1",
+        "-i",
+        bottom_text_overlay_path,
         "-filter_complex",
         (
             f"[2:v]format=rgba,fade=t=in:st=0:d=0.45:alpha=1,"
-            f"fade=t=out:st={text_fade_out_start:.2f}:d={text_fade_duration:.2f}:alpha=1[text];"
+            f"fade=t=out:st={text_fade_out_start:.2f}:d={text_fade_duration:.2f}:alpha=1[toptext];"
+            f"[3:v]format=rgba,fade=t=in:st={text_stagger_delay:.2f}:d=0.35:alpha=1,"
+            f"fade=t=out:st={bottom_fade_out_start:.2f}:d={text_fade_duration:.2f}:alpha=1[bottomtext];"
             f"[0:v][1:v]overlay={logo_x}:{logo_y}[v1];"
-            f"[v1][text]overlay=0:0:format=auto:enable='between(t,0,{text_visible_seconds:.2f})'[v]"
+            f"[v1][toptext]overlay=0:0:format=auto:enable='between(t,0,{text_visible_seconds:.2f})'[v2];"
+            f"[v2][bottomtext]overlay=0:0:format=auto:enable='between(t,{text_stagger_delay:.2f},{text_stagger_delay + bottom_visible_seconds:.2f})'[v]"
         ),
         "-map",
         "[v]",
