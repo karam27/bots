@@ -2206,7 +2206,7 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
     fixed_band_height = max(92, int(height * 0.125))
-    fixed_band_top = max(22, int(((height - fixed_band_height) / 2) + (height * 0.205)))
+    fixed_band_top = max(22, int((height - fixed_band_height) / 2))
     fixed_band_bottom = min(height - 20, fixed_band_top + fixed_band_height)
     split_ratio = 0.52 if len(lines) == 2 else 0.50
     while font_size >= min_font_size:
@@ -2314,7 +2314,10 @@ def render_montage_video(input_video_path: str, text: str) -> str:
     logo_y = max(24, int(height * 0.23))
     text_visible_seconds = 4.0
     text_stagger_delay = 0.18
-    text_fade_duration = 0.45
+    text_fade_duration = 0.38
+    top_slide_duration = 0.24
+    bottom_slide_duration = 0.22
+    slide_offset = max(14, int(height * 0.018))
     text_fade_out_start = max(0.0, text_visible_seconds - text_fade_duration)
     bottom_visible_seconds = max(0.0, text_visible_seconds - text_stagger_delay)
     bottom_fade_out_start = max(text_stagger_delay, text_visible_seconds - text_fade_duration)
@@ -2342,8 +2345,8 @@ def render_montage_video(input_video_path: str, text: str) -> str:
             f"[3:v]format=rgba,fade=t=in:st={text_stagger_delay:.2f}:d=0.35:alpha=1,"
             f"fade=t=out:st={bottom_fade_out_start:.2f}:d={text_fade_duration:.2f}:alpha=1[bottomtext];"
             f"[0:v][1:v]overlay={logo_x}:{logo_y}[v1];"
-            f"[v1][toptext]overlay=0:0:format=auto:enable='between(t,0,{text_visible_seconds:.2f})'[v2];"
-            f"[v2][bottomtext]overlay=0:0:format=auto:enable='between(t,{text_stagger_delay:.2f},{text_stagger_delay + bottom_visible_seconds:.2f})'[v]"
+            f"[v1][toptext]overlay=0:'if(lt(t,{top_slide_duration:.2f}),-{slide_offset}*(1-t/{top_slide_duration:.2f}),0)':format=auto:enable='between(t,0,{text_visible_seconds:.2f})'[v2];"
+            f"[v2][bottomtext]overlay=0:'if(lt(t,{text_stagger_delay + bottom_slide_duration:.2f}),if(gte(t,{text_stagger_delay:.2f}),{slide_offset}*(1-(t-{text_stagger_delay:.2f})/{bottom_slide_duration:.2f}),NAN),NAN)':format=auto:enable='between(t,{text_stagger_delay:.2f},{text_stagger_delay + bottom_visible_seconds:.2f})'[v]"
         ),
         "-map",
         "[v]",
