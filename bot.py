@@ -2185,8 +2185,8 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
-    side_margin = max(18, int(width * 0.07))
-    inner_pad_x = max(24, int(width * 0.045))
+    side_margin = max(80, int(width * 0.18))
+    inner_pad_x = max(18, int(width * 0.028))
     max_text_width = width - side_margin * 2 - inner_pad_x * 2
 
     cleaned = clean_text_safe(text)
@@ -2194,19 +2194,19 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     word_count = len(words)
 
     if word_count <= 2:
-        font_size = max(52, int(width * 0.084))
+        font_size = max(44, int(width * 0.070))
     elif word_count <= 4:
-        font_size = max(48, int(width * 0.076))
+        font_size = max(40, int(width * 0.064))
     elif word_count <= 6:
-        font_size = max(42, int(width * 0.066))
+        font_size = max(36, int(width * 0.058))
     else:
-        font_size = max(36, int(width * 0.056))
+        font_size = max(32, int(width * 0.050))
 
-    min_font_size = max(24, int(font_size * 0.60))
+    min_font_size = max(20, int(font_size * 0.58))
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
-    fixed_band_height = max(170, int(height * 0.22))
-    fixed_band_top = max(22, int(((height - fixed_band_height) / 2) + (height * 0.21)))
+    fixed_band_height = max(92, int(height * 0.125))
+    fixed_band_top = max(22, int(((height - fixed_band_height) / 2) + (height * 0.205)))
     fixed_band_bottom = min(height - 20, fixed_band_top + fixed_band_height)
     split_ratio = 0.52 if len(lines) == 2 else 0.50
     while font_size >= min_font_size:
@@ -2221,12 +2221,12 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
         top_h = heights[0] if heights else 0
         bottom_h = heights[1] if len(heights) > 1 else 0
         width_ok = (max(widths) if widths else 0) <= max_text_width
-        height_ok = top_h <= max(1, top_box_height - 28) and bottom_h <= max(1, bottom_box_height - 28)
+        height_ok = top_h <= max(1, top_box_height - 14) and bottom_h <= max(1, bottom_box_height - 14)
         if width_ok and height_ok:
             break
         font_size -= 2
 
-    spacing = max(10, int(font_size * 0.20))
+    spacing = max(6, int(font_size * 0.12))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     max_line_height = max(heights) if heights else font_size
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
