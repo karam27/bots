@@ -2173,7 +2173,7 @@ def create_montage_text_overlay(output_path: str, width: int, height: int, text:
     canvas.alpha_composite(shadow)
 
     draw.rectangle((band_left, band_top, band_right, split_y), fill=(255, 226, 0, 245))
-    draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(217, 217, 217, 245))
+    draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(255, 255, 255, 245))
 
     total_text_h = sum(heights) + spacing * max(0, len(lines) - 1)
     y = band_top + int((band_height - total_text_h) / 2) - max(2, int(height * 0.002))
@@ -2224,7 +2224,8 @@ def render_montage_video(input_video_path: str, text: str) -> str:
     create_resized_logo_overlay(logo_overlay_path, width)
     create_montage_text_overlay(text_overlay_path, width, height, text)
 
-    logo_y = max(24, int(height * 0.04))
+    logo_x = max(24, width - max(180, int(width * 0.24)) - int(width * 0.08))
+    logo_y = max(24, int(height * 0.23))
     text_visible_seconds = 4.0
     text_fade_duration = 0.45
     text_fade_out_start = max(0.0, text_visible_seconds - text_fade_duration)
@@ -2245,7 +2246,7 @@ def render_montage_video(input_video_path: str, text: str) -> str:
         (
             f"[2:v]format=rgba,fade=t=in:st=0:d=0.45:alpha=1,"
             f"fade=t=out:st={text_fade_out_start:.2f}:d={text_fade_duration:.2f}:alpha=1[text];"
-            f"[0:v][1:v]overlay=(W-w)/2:{logo_y}[v1];"
+            f"[0:v][1:v]overlay={logo_x}:{logo_y}[v1];"
             f"[v1][text]overlay=0:0:format=auto:enable='between(t,0,{text_visible_seconds:.2f})'[v]"
         ),
         "-map",
