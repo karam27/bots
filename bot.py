@@ -2185,8 +2185,8 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
-    side_margin = max(24, int(width * 0.10))
-    inner_pad_x = max(18, int(width * 0.035))
+    side_margin = max(18, int(width * 0.07))
+    inner_pad_x = max(20, int(width * 0.04))
     max_text_width = width - side_margin * 2 - inner_pad_x * 2
 
     cleaned = clean_text_safe(text)
@@ -2194,13 +2194,13 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     word_count = len(words)
 
     if word_count <= 2:
-        font_size = max(62, int(width * 0.102))
+        font_size = max(60, int(width * 0.096))
     elif word_count <= 4:
-        font_size = max(56, int(width * 0.088))
+        font_size = max(54, int(width * 0.084))
     elif word_count <= 6:
-        font_size = max(50, int(width * 0.076))
+        font_size = max(48, int(width * 0.072))
     else:
-        font_size = max(42, int(width * 0.064))
+        font_size = max(40, int(width * 0.060))
 
     min_font_size = max(26, int(font_size * 0.58))
     lines = [cleaned]
@@ -2213,18 +2213,18 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
             break
         font_size -= 2
 
-    spacing = max(8, int(font_size * 0.18))
+    spacing = max(10, int(font_size * 0.20))
     heights = [text_bbox(draw, line, font)[1] for line in lines]
     max_line_height = max(heights) if heights else font_size
     total_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    pad_y = max(10, int(height * 0.01))
+    pad_y = max(16, int(height * 0.016))
     band_left = side_margin
     band_right = width - side_margin
-    band_height = max(int(max_line_height * 2.15), total_h + pad_y * 2)
-    band_top = max(22, int(((height - band_height) / 2) + (height * 0.20)))
+    band_height = max(int(max_line_height * 2.65), total_h + pad_y * 2)
+    band_top = max(22, int(((height - band_height) / 2) + (height * 0.21)))
     band_bottom = min(height - 20, band_top + band_height)
     band_height = band_bottom - band_top
-    split_ratio = 0.54 if len(lines) == 2 else 0.50
+    split_ratio = 0.52 if len(lines) == 2 else 0.50
     split_y = band_top + int(band_height * split_ratio)
 
     top_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
