@@ -8,7 +8,8 @@ $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $script + '"')
 
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+$triggerStartup = New-ScheduledTaskTrigger -AtStartup
+$triggerLogon = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 999 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -19,7 +20,7 @@ $settings = New-ScheduledTaskSettingsSet `
 Register-ScheduledTask `
     -TaskName $taskName `
     -Action $action `
-    -Trigger $trigger `
+    -Trigger @($triggerStartup, $triggerLogon) `
     -Settings $settings `
     -Description "Keeps the Telegram news bot running in the background." `
     -Force | Out-Null

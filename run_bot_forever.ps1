@@ -27,8 +27,8 @@ function Clear-StaleLock {
     $isStale = $true
 
     if ($rawPid -match '^\d+$') {
-        $proc = Get-Process -Id ([int]$rawPid) -ErrorAction SilentlyContinue
-        if ($proc) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $rawPid" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.CommandLine -like "*$bot*") {
             $isStale = $false
             Write-ManagerLog "bot.lock is active for PID $rawPid. Wrapper will not start a duplicate instance." $errLog
         }
@@ -61,8 +61,16 @@ while ($true) {
     }
 
     Write-ManagerLog "Launching bot.py"
-    & $python $bot 1>> $outLog 2>> $errLog
-    $exitCode = $LASTEXITCODE
+    $proc = Start-Process `
+        -FilePath $python `
+        -ArgumentList $bot `
+        -WorkingDirectory $root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $outLog `
+        -RedirectStandardError $errLog `
+        -PassThru
+    Wait-Process -Id $proc.Id
+    $exitCode = $proc.ExitCode
 
     Write-ManagerLog "bot.py exited with code $exitCode" $errLog
     Start-Sleep -Seconds 5

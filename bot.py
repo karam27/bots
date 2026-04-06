@@ -60,6 +60,10 @@ BOT_LOCK_PATH = os.path.join(BASE_DIR, "bot.lock")
 BOT_LOCK_FD: Optional[int] = None
 
 
+class BotAlreadyRunningError(RuntimeError):
+    pass
+
+
 def safe_console_print(message: str):
     try:
         print(message)
@@ -116,13 +120,69 @@ def release_bot_lock():
         pass
 
 
+def _read_bot_lock_pid() -> Optional[int]:
+    try:
+        with open(BOT_LOCK_PATH, "r", encoding="ascii", errors="ignore") as f:
+            raw = (f.read() or "").strip()
+    except OSError:
+        return None
+    return int(raw) if raw.isdigit() else None
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION,
+                False,
+                pid,
+            )
+            if not handle:
+                return False
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def clear_stale_bot_lock() -> bool:
+    if not os.path.exists(BOT_LOCK_PATH):
+        return False
+    lock_pid = _read_bot_lock_pid()
+    if lock_pid and _pid_exists(lock_pid):
+        return False
+    try:
+        os.remove(BOT_LOCK_PATH)
+        return True
+    except OSError:
+        return False
+
+
 def acquire_bot_lock():
     global BOT_LOCK_FD
+    clear_stale_bot_lock()
     try:
         BOT_LOCK_FD = os.open(BOT_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as exc:
-        raise RuntimeError(
-            "Another local bot process is already holding bot.lock. "
+        lock_pid = _read_bot_lock_pid()
+        pid_note = f" (PID {lock_pid})" if lock_pid else ""
+        raise BotAlreadyRunningError(
+            "Another local bot process is already holding bot.lock"
+            f"{pid_note}. "
             "Stop it or delete bot.lock if it is stale."
         ) from exc
     os.write(BOT_LOCK_FD, str(os.getpid()).encode("ascii", errors="ignore"))
@@ -2122,7 +2182,9 @@ def split_text_to_two_lines(draw, text: str, font, max_width: int) -> List[str]:
 def create_montage_text_overlay(output_path: str, width: int, height: int, text: str):
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
-    font_path = ensure_existing_path(get_preferred_project_font(), get_preferred_project_font())
+    montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
+    fallback_font = get_preferred_project_font()
+    font_path = ensure_existing_path(montage_font, fallback_font)
     side_margin = max(24, int(width * 0.10))
     inner_pad_x = max(18, int(width * 0.035))
     max_text_width = width - side_margin * 2 - inner_pad_x * 2
@@ -4327,7 +4389,11 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not set in .env")
-    acquire_bot_lock()
+    try:
+        acquire_bot_lock()
+    except BotAlreadyRunningError as exc:
+        safe_console_print(str(exc))
+        return
     while True:
         builder = (
             Application.builder()
