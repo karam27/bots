@@ -16,7 +16,7 @@ from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat, features
 
 import arabic_reshaper
 from bidi.algorithm import get_display
@@ -809,6 +809,201 @@ def infer_image_layout_from_text_boxes(text_boxes: list[dict], width: int, heigh
     }
 
 
+def _box_intersection_area(box_a: list[int], box_b: list[int]) -> int:
+    l1, t1, r1, b1 = box_a
+    l2, t2, r2, b2 = box_b
+    iw = max(0, min(r1, r2) - max(l1, l2))
+    ih = max(0, min(b1, b2) - max(t1, t2))
+    return iw * ih
+
+
+def _score_text_box_readability(template_image: Image.Image, box: list[int]) -> float:
+    l, t, r, b = box
+    if r <= l or b <= t:
+        return -1e9
+    crop = template_image.crop((l, t, r, b)).convert("RGB")
+    gray = crop.convert("L")
+    stat = ImageStat.Stat(gray)
+    mean_l = float(stat.mean[0]) if stat.mean else 127.0
+    std_l = float(stat.stddev[0]) if stat.stddev else 0.0
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    edge_mean = float(ImageStat.Stat(edges).mean[0])
+    darkness_contrast = abs(mean_l - 28.0)
+    lightness_contrast = abs(mean_l - 235.0)
+    contrast_score = max(darkness_contrast, lightness_contrast)
+    emptiness_score = max(0.0, 100.0 - (std_l + edge_mean))
+    return (contrast_score * 1.35) + emptiness_score
+
+
+def detect_dynamic_layout_heuristic(
+    template_image: Image.Image,
+    width: int,
+    height: int,
+    max_font_size: int,
+    min_font_size: int,
+) -> dict:
+    safe_margin_x = max(28, int(width * 0.04))
+    safe_margin_y = max(22, int(height * 0.03))
+    base_w = max(140, int(width * 0.78))
+    base_h = max(72, int(height * 0.24))
+    cx = width // 2
+
+    candidate_tops = [
+        int(height * 0.50),
+        int(height * 0.56),
+        int(height * 0.62),
+        int(height * 0.68),
+    ]
+    candidate_width_scales = [0.72, 0.78, 0.84]
+    candidate_height_scales = [0.20, 0.24, 0.28]
+    candidates: list[list[int]] = []
+    for top in candidate_tops:
+        for ws in candidate_width_scales:
+            for hs in candidate_height_scales:
+                bw = max(120, int(width * ws))
+                bh = max(56, int(height * hs))
+                l = max(safe_margin_x, cx - (bw // 2))
+                r = min(width - safe_margin_x, l + bw)
+                l = max(safe_margin_x, r - bw)
+                t = max(safe_margin_y, top)
+                b = min(height - safe_margin_y, t + bh)
+                if (r - l) >= 120 and (b - t) >= 56:
+                    candidates.append([l, t, r, b])
+
+    if not candidates:
+        fallback = build_default_text_box(width, height)
+        candidates = [fallback]
+
+    best_box = candidates[0]
+    best_score = -1e9
+    for box in candidates:
+        score = _score_text_box_readability(template_image, box)
+        # Prefer lower area slightly to protect logos usually near top.
+        score += (box[1] / max(1, height)) * 14.0
+        if score > best_score:
+            best_score = score
+            best_box = box
+
+    text_top = best_box[1]
+    suggested_image_bottom = max(int(height * 0.22), min(int(height * 0.84), text_top - max(8, int(height * 0.012))))
+    image_layout = {
+        "image_mode": "full",
+        "image_area_bottom": suggested_image_bottom,
+        "template_cutouts": [{"shape": "rectangle", "box": [0, 0, width, suggested_image_bottom]}],
+    }
+
+    l, t, r, b = best_box
+    text_h = b - t
+    title_bottom = t + int(text_h * 0.64)
+    subtitle_top = title_bottom + max(6, int(height * 0.008))
+    text_boxes = [
+        {
+            "id": "title",
+            "enabled": True,
+            "source": "headline_or_full",
+            "box": [l, t, r, max(title_bottom, t + 34)],
+            "padding_x": max(20, int(width * 0.028)),
+            "padding_y": max(8, int(height * 0.008)),
+            "text_align": "center",
+            "vertical_align": "center",
+            "max_font_size": max_font_size,
+            "min_font_size": min_font_size,
+            "max_lines": 3,
+            "line_spacing_factor": 0.08,
+            "line_height_factor": 0.92,
+            "prefer_balanced_lines": True,
+            "prefer_single_line": False,
+            "text_color": [255, 255, 255],
+            "shadow_color": [0, 0, 0, 170],
+            "shadow_offset": [2, 3],
+        },
+        {
+            "id": "subtitle",
+            "enabled": True,
+            "source": "subtitle_or_empty",
+            "box": [l, subtitle_top, r, b],
+            "padding_x": max(18, int(width * 0.024)),
+            "padding_y": max(6, int(height * 0.006)),
+            "text_align": "center",
+            "vertical_align": "center",
+            "max_font_size": max(min_font_size, int(max_font_size * 0.58)),
+            "min_font_size": max(18, int(min_font_size * 0.64)),
+            "max_lines": 2,
+            "line_spacing_factor": 0.06,
+            "line_height_factor": 0.92,
+            "prefer_balanced_lines": True,
+            "prefer_single_line": True,
+            "text_color": [255, 255, 255],
+            "shadow_color": [0, 0, 0, 150],
+            "shadow_offset": [1, 2],
+        },
+    ]
+    text_boxes = normalize_ai_text_boxes(text_boxes, width, height, max_font_size=max_font_size, min_font_size=min_font_size)
+    return {"text_boxes": text_boxes, "image_layout": image_layout}
+
+
+def build_dynamic_elements_json(text_boxes: list[dict], image_layout: dict, width: int, height: int) -> dict:
+    elements: list[dict] = []
+    for box_cfg in text_boxes or []:
+        raw_box = box_cfg.get("box")
+        if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+            continue
+        l, t, r, b = [int(v) for v in raw_box]
+        if r <= l or b <= t:
+            continue
+        elements.append(
+            {
+                "type": "text",
+                "id": str(box_cfg.get("id", "text")),
+                "position": {"x": l, "y": t, "width": (r - l), "height": (b - t)},
+                "alignment": str(box_cfg.get("text_align", "center")),
+                "verticalAlignment": str(box_cfg.get("vertical_align", "center")),
+                "autoResize": True,
+                "padding": {
+                    "x": int(box_cfg.get("padding_x", 0) or 0),
+                    "y": int(box_cfg.get("padding_y", 0) or 0),
+                },
+                "responsive": {
+                    "short": {"fontScale": 1.14, "preferSingleLine": True},
+                    "medium": {"fontScale": 1.0, "preferBalancedLines": True},
+                    "long": {"fontScale": 0.82, "maxLines": int(box_cfg.get("max_lines", 3) or 3)},
+                    "overflow": "shrink_to_fit",
+                },
+            }
+        )
+
+    if isinstance(image_layout, dict):
+        mode = str(image_layout.get("image_mode", "full") or "full").lower()
+        if mode == "box":
+            raw_box = image_layout.get("image_box") or image_layout.get("image_mask_box")
+            if isinstance(raw_box, (list, tuple)) and len(raw_box) == 4:
+                l, t, r, b = [int(v) for v in raw_box]
+                if r > l and b > t:
+                    elements.append(
+                        {
+                            "type": "image",
+                            "id": "image_main",
+                            "position": {"x": l, "y": t, "width": (r - l), "height": (b - t)},
+                            "fit": "cover",
+                            "crop": "smart",
+                        }
+                    )
+        else:
+            bottom = int(image_layout.get("image_area_bottom", int(height * 0.64)))
+            bottom = max(2, min(height, bottom))
+            elements.append(
+                {
+                    "type": "image",
+                    "id": "image_main",
+                    "position": {"x": 0, "y": 0, "width": int(width), "height": int(bottom)},
+                    "fit": "cover",
+                    "crop": "smart",
+                }
+            )
+
+    return {"elements": elements}
+
+
 def analyze_template_layout_with_openai(
     source_bytes: bytes,
     width: int,
@@ -1003,6 +1198,18 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
     attach_template_font(folder_path)
 
     config = build_default_template_config(template_name, folder_name, width, height)
+    heuristic_layout = detect_dynamic_layout_heuristic(
+        template_image=template_image,
+        width=width,
+        height=height,
+        max_font_size=int(config.get("max_font_size", 120)),
+        min_font_size=int(config.get("min_font_size", 28)),
+    )
+    config["text_boxes"] = heuristic_layout.get("text_boxes", config.get("text_boxes", []))
+    heuristic_image_layout = heuristic_layout.get("image_layout", {})
+    config["image_mode"] = "full"
+    config["image_area_bottom"] = int(heuristic_image_layout.get("image_area_bottom", config.get("image_area_bottom", int(height * 0.64))))
+    config["template_cutouts"] = heuristic_image_layout.get("template_cutouts", [])
     ai_layout, ai_error = analyze_template_layout_with_openai(
         source_bytes=source_bytes,
         width=width,
@@ -1038,6 +1245,17 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
             "model": OPENAI_TEMPLATE_MODEL,
             "error": str(ai_error or "fallback_to_default"),
         }
+    config["dynamic_elements"] = build_dynamic_elements_json(
+        text_boxes=config.get("text_boxes", []),
+        image_layout={
+            "image_mode": config.get("image_mode", "full"),
+            "image_area_bottom": config.get("image_area_bottom"),
+            "image_box": config.get("image_box"),
+            "image_mask_box": config.get("image_mask_box"),
+        },
+        width=width,
+        height=height,
+    )
     config_path = os.path.join(folder_path, "config.json")
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
