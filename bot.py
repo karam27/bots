@@ -809,6 +809,41 @@ def infer_image_layout_from_text_boxes(text_boxes: list[dict], width: int, heigh
     }
 
 
+def ensure_image_window_cutouts(cfg: dict, width: int, height: int) -> dict:
+    if not isinstance(cfg, dict):
+        return cfg
+    image_mode = str(cfg.get("image_mode", "full") or "full").strip().lower()
+    cutouts = cfg.get("template_cutouts")
+    has_valid_cutout = isinstance(cutouts, list) and any(
+        isinstance(item, dict)
+        and isinstance(item.get("box"), (list, tuple))
+        and len(item.get("box")) == 4
+        for item in cutouts
+    )
+    if has_valid_cutout:
+        return cfg
+
+    if image_mode == "box":
+        raw_box = cfg.get("image_mask_box") or cfg.get("image_box")
+        if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+            fallback_bottom = int(cfg.get("image_area_bottom", int(height * 0.58)) or int(height * 0.58))
+            raw_box = [0, 0, width, max(2, min(height, fallback_bottom))]
+            cfg["image_box"] = list(raw_box)
+            cfg["image_mask_box"] = list(raw_box)
+        l, t, r, b = [int(v) for v in raw_box]
+        l = max(0, min(width - 2, l))
+        t = max(0, min(height - 2, t))
+        r = max(l + 2, min(width, r))
+        b = max(t + 2, min(height, b))
+        cfg["template_cutouts"] = [{"shape": "rectangle", "box": [l, t, r, b]}]
+        return cfg
+
+    bottom = int(cfg.get("image_area_bottom", int(height * 0.58)) or int(height * 0.58))
+    bottom = max(2, min(height, bottom))
+    cfg["template_cutouts"] = [{"shape": "rectangle", "box": [0, 0, width, bottom]}]
+    return cfg
+
+
 def _box_intersection_area(box_a: list[int], box_b: list[int]) -> int:
     l1, t1, r1, b1 = box_a
     l2, t2, r2, b2 = box_b
@@ -1433,6 +1468,7 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         width=width,
         height=height,
     )
+    config = ensure_image_window_cutouts(config, width=width, height=height)
     config_path = os.path.join(folder_path, "config.json")
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
@@ -2274,6 +2310,12 @@ def load_template_entry(folder: str) -> tuple[Optional[dict], Optional[str]]:
             print(f"[Templates] generated fallback image_box for '{folder}'")
         except Exception as e:
             return None, f"image_mode=box requires image_box and fallback failed: {e}"
+    try:
+        with Image.open(cfg["template_path"]) as template_img:
+            width, height = template_img.size
+        cfg = ensure_image_window_cutouts(cfg, width=width, height=height)
+    except Exception as e:
+        return None, f"unable to validate template_cutouts: {e}"
 
     return cfg, None
 
@@ -2333,6 +2375,12 @@ def load_loose_template_entry(cfg_path: str) -> tuple[Optional[dict], Optional[s
             print(f"[Templates] generated fallback image_box for '{cfg['id']}'")
         except Exception as e:
             return None, f"image_mode=box requires image_box and fallback failed: {e}"
+    try:
+        with Image.open(cfg["template_path"]) as template_img:
+            width, height = template_img.size
+        cfg = ensure_image_window_cutouts(cfg, width=width, height=height)
+    except Exception as e:
+        return None, f"unable to validate template_cutouts: {e}"
 
     return cfg, None
 
