@@ -33,15 +33,15 @@
     "enabled": true,
     "box": [0, 0, 1632, 1225],
     "direction": "vertical",
-    "start_color": [12, 18, 26, 0],
-    "end_color": [182, 32, 24, 150]
+    "start_color": [8, 14, 24, 24],
+    "end_color": [198, 38, 30, 170]
   },
   "foreground_gradient_overlay": {
     "enabled": true,
     "box": [60, 760, 1572, 1470],
     "direction": "vertical",
-    "start_color": [255, 255, 255, 0],
-    "end_color": [214, 40, 32, 92]
+    "start_color": [255, 255, 255, 22],
+    "end_color": [206, 34, 28, 128]
   },
 
 
