@@ -3643,7 +3643,27 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         overlay_crop = original_base.crop((l, t, r, b))
         canvas.alpha_composite(overlay_crop, (l, t))
 
-    for overlay_cfg in template_cfg.get("image_overlays", []):
+    runtime_overlays = list(runtime_cfg.get("image_overlays", []) or [])
+    has_logo_overlay = any(
+        isinstance(item, dict)
+        and os.path.basename(str(item.get("path", "") or "")).lower().startswith("logo")
+        for item in runtime_overlays
+    )
+    if not has_logo_overlay:
+        fallback_logo = get_default_brand_logo_path()
+        if fallback_logo and os.path.isfile(fallback_logo):
+            guessed_logo_box = detect_logo_overlay_box(original_base, width=W, height=H)
+            if not guessed_logo_box:
+                guessed_logo_box = make_default_logo_box(width=W, height=H)
+            runtime_overlays.append(
+                {
+                    "path": os.path.relpath(fallback_logo, BASE_DIR).replace("\\", "/"),
+                    "box": [int(v) for v in guessed_logo_box],
+                    "remove_white_bg": False,
+                }
+            )
+
+    for overlay_cfg in runtime_overlays:
         if not isinstance(overlay_cfg, dict):
             continue
         overlay_path = ensure_existing_path(resolve_path(overlay_cfg.get("path", "")))
