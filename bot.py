@@ -3677,6 +3677,20 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
         canvas.alpha_composite(overlay_crop, (l, t))
 
     runtime_overlays = list(runtime_cfg.get("image_overlays", []) or [])
+    normalized_runtime_overlays = []
+    for item in runtime_overlays:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = dict(item)
+        item_path = str(normalized_item.get("path", "") or "")
+        if os.path.basename(item_path).lower().startswith("logo"):
+            normalized_item["box"] = normalize_logo_box(
+                normalized_item.get("box"),
+                width=W,
+                height=H,
+            )
+        normalized_runtime_overlays.append(normalized_item)
+    runtime_overlays = normalized_runtime_overlays
     has_logo_overlay = any(
         isinstance(item, dict)
         and os.path.basename(str(item.get("path", "") or "")).lower().startswith("logo")
