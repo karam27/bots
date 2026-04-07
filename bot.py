@@ -844,6 +844,92 @@ def ensure_image_window_cutouts(cfg: dict, width: int, height: int) -> dict:
     return cfg
 
 
+def detect_logo_overlay_box(template_image: Image.Image, width: int, height: int) -> Optional[list[int]]:
+    scan_bottom = max(40, int(height * 0.34))
+    if scan_bottom <= 10:
+        return None
+
+    top_region = template_image.crop((0, 0, width, scan_bottom)).convert("L")
+    # Edge-based detection to capture logo shapes regardless of color.
+    edges = top_region.filter(ImageFilter.FIND_EDGES).filter(ImageFilter.MaxFilter(3))
+    px = edges.load()
+    if px is None:
+        return None
+
+    bin_threshold = 52
+    visited = set()
+    components = []
+    w, h = edges.size
+    min_component_pixels = max(90, int((w * h) * 0.0012))
+
+    for y in range(h):
+        for x in range(w):
+            if (x, y) in visited:
+                continue
+            if px[x, y] < bin_threshold:
+                continue
+            stack = [(x, y)]
+            visited.add((x, y))
+            min_x = max_x = x
+            min_y = max_y = y
+            count = 0
+            while stack:
+                cx, cy = stack.pop()
+                count += 1
+                if cx < min_x:
+                    min_x = cx
+                if cx > max_x:
+                    max_x = cx
+                if cy < min_y:
+                    min_y = cy
+                if cy > max_y:
+                    max_y = cy
+                for nx, ny in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                        continue
+                    if (nx, ny) in visited:
+                        continue
+                    if px[nx, ny] < bin_threshold:
+                        continue
+                    visited.add((nx, ny))
+                    stack.append((nx, ny))
+
+            if count < min_component_pixels:
+                continue
+            bw = (max_x - min_x + 1)
+            bh = (max_y - min_y + 1)
+            if bw < int(width * 0.08) or bh < int(height * 0.03):
+                continue
+            if bw > int(width * 0.78) or bh > int(height * 0.28):
+                continue
+            aspect = bw / max(1, bh)
+            if aspect < 0.5 or aspect > 6.2:
+                continue
+            density = count / max(1, bw * bh)
+            if density < 0.06:
+                continue
+            # Favor components near top and near horizontal center/right where logos usually live.
+            center_x = min_x + (bw // 2)
+            norm_top = min_y / max(1, h)
+            center_bias = 1.0 - abs((center_x / max(1, w)) - 0.68)
+            score = (count * density) + (80.0 * center_bias) - (60.0 * norm_top)
+            components.append((score, [min_x, min_y, max_x + 1, max_y + 1]))
+
+    if not components:
+        return None
+    components.sort(key=lambda item: item[0], reverse=True)
+    l, t, r, b = components[0][1]
+    pad_x = max(8, int(width * 0.008))
+    pad_y = max(6, int(height * 0.006))
+    l = max(0, l - pad_x)
+    t = max(0, t - pad_y)
+    r = min(width, r + pad_x)
+    b = min(scan_bottom, b + pad_y)
+    if r <= l or b <= t:
+        return None
+    return [int(l), int(t), int(r), int(b)]
+
+
 def _box_intersection_area(box_a: list[int], box_b: list[int]) -> int:
     l1, t1, r1, b1 = box_a
     l2, t2, r2, b2 = box_b
@@ -1468,6 +1554,16 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         width=width,
         height=height,
     )
+    # Keep original template logo visible after image insertion by restoring its box.
+    detected_logo_box = detect_logo_overlay_box(template_image, width=width, height=height)
+    if detected_logo_box:
+        overlay_boxes = config.get("template_overlay_boxes")
+        if not isinstance(overlay_boxes, list):
+            overlay_boxes = []
+        if detected_logo_box not in overlay_boxes:
+            overlay_boxes.append(detected_logo_box)
+        config["template_overlay_boxes"] = overlay_boxes
+
     config = ensure_image_window_cutouts(config, width=width, height=height)
     config_path = os.path.join(folder_path, "config.json")
     with open(config_path, "w", encoding="utf-8") as f:

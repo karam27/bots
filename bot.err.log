@@ -762,3 +762,4 @@ Traceback (most recent call last):
   File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\PIL\Image.py", line 3498, in open
     raise UnidentifiedImageError(msg)
 PIL.UnidentifiedImageError: cannot identify image file <_io.BytesIO object at 0x000001F8D6C7BE20>
+[2026-04-07 15:01:17] bot.py exited with code 
