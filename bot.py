@@ -3379,10 +3379,11 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     with Image.open(template_path) as template_image:
         original_base = template_image.convert("RGBA")
 
+    W, H = original_base.size
+    runtime_cfg = ensure_image_window_cutouts(dict(template_cfg), width=W, height=H)
     base = original_base.copy()
-    base = apply_template_cutouts(base, template_cfg.get("template_cutouts", []))
+    base = apply_template_cutouts(base, runtime_cfg.get("template_cutouts", []))
 
-    W, H = base.size
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     news_img = news_img.convert("RGBA")
 
@@ -3411,31 +3412,31 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             bottom_padding=int(template_cfg.get("trim_bottom_white_padding", 8)),
         )
 
-    image_mode = str(template_cfg.get("image_mode", "full") or "full").strip().lower()
+    image_mode = str(runtime_cfg.get("image_mode", "full") or "full").strip().lower()
     if image_mode == "cover":
         image_mode = "full"
-    top_bias, left_bias, image_zoom = resolve_image_crop_settings(news_img, template_cfg)
+    top_bias, left_bias, image_zoom = resolve_image_crop_settings(news_img, runtime_cfg)
 
     if image_mode == "full":
-        bottom = int(template_cfg.get("image_area_bottom", int(H * 0.58)))
+        bottom = int(runtime_cfg.get("image_area_bottom", int(H * 0.58)))
         full_box = (0, 0, W, bottom)
         fitted = fit_image_to_box(news_img, full_box, top_bias=top_bias, left_bias=left_bias, zoom=image_zoom)
         canvas.paste(fitted, (0, 0), fitted if fitted.mode == "RGBA" else None)
-        apply_image_gradient_overlay(canvas, template_cfg, full_box)
+        apply_image_gradient_overlay(canvas, runtime_cfg, full_box)
 
     else:
-        raw_image_box = template_cfg.get("image_box")
-        raw_mask_box = template_cfg.get("image_mask_box")
+        raw_image_box = runtime_cfg.get("image_box")
+        raw_mask_box = runtime_cfg.get("image_mask_box")
         if not isinstance(raw_image_box, (list, tuple)) or len(raw_image_box) != 4:
-            fallback_bottom = int(template_cfg.get("image_area_bottom", int(H * 0.58)))
+            fallback_bottom = int(runtime_cfg.get("image_area_bottom", int(H * 0.58)))
             raw_image_box = [0, 0, W, fallback_bottom]
         image_box = tuple(int(v) for v in raw_image_box)
-        mask_shape = str(template_cfg.get("image_mask_shape", "rectangle")).lower()
+        mask_shape = str(runtime_cfg.get("image_mask_shape", "rectangle")).lower()
         if not isinstance(raw_mask_box, (list, tuple)) or len(raw_mask_box) != 4:
             raw_mask_box = image_box
         mask_box = tuple(int(v) for v in raw_mask_box)
-        image_offset_x = int(template_cfg.get("image_offset_x", 0))
-        image_offset_y = int(template_cfg.get("image_offset_y", 0))
+        image_offset_x = int(runtime_cfg.get("image_offset_x", 0))
+        image_offset_y = int(runtime_cfg.get("image_offset_y", 0))
 
         fitted = fit_image_to_box(
             news_img,
@@ -3445,8 +3446,8 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
             zoom=image_zoom,
         )
 
-        mask_bleed = int(template_cfg.get("image_mask_bleed", 6))
-        mask_feather = float(template_cfg.get("image_mask_feather", 0))
+        mask_bleed = int(runtime_cfg.get("image_mask_bleed", 6))
+        mask_feather = float(runtime_cfg.get("image_mask_feather", 0))
 
         mask = build_shape_mask(
             (mask_box[2] - mask_box[0], mask_box[3] - mask_box[1]),
@@ -3464,7 +3465,7 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
 
         image_layer.alpha_composite(fitted, (paste_x, paste_y))
         canvas.paste(image_layer, (mask_box[0], mask_box[1]), mask)
-        apply_image_gradient_overlay(canvas, template_cfg, mask_box)
+        apply_image_gradient_overlay(canvas, runtime_cfg, mask_box)
 
     canvas.alpha_composite(base)
     for overlay_box in template_cfg.get("template_overlay_boxes", []):

@@ -1,0 +1,129 @@
+{
+  "name": "محمد",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
+  "template_path": "templates/محمد/template.png",
+  "font_bold_path": "templates/محمد/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 819,
+  "text_box": [
+    61,
+    870,
+    962,
+    1203
+  ],
+  "template_cutouts": [],
+  "max_font_size": 76,
+  "min_font_size": 38,
+  "text_color": [
+    255,
+    255,
+    255
+  ],
+  "shadow_color": [
+    0,
+    0,
+    0,
+    160
+  ],
+  "shadow_offset": [
+    2,
+    3
+  ],
+  "top_bias": 0.3,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 51,
+  "text_padding_y": 25,
+  "line_spacing_factor": 0.22,
+  "max_lines": 4,
+  "short_centered_layout": true,
+  "short_center_offset": 0,
+  "short_fill_ratio": 0.65,
+  "text_layout_engine": "smart_boxes",
+  "text_box_separator": "|",
+  "text_boxes": [
+    {
+      "id": "title",
+      "enabled": true,
+      "source": "headline_or_full",
+      "box": [
+        61,
+        870,
+        962,
+        1089
+      ],
+      "padding_x": 40,
+      "padding_y": 12,
+      "text_align": "center",
+      "vertical_align": "center",
+      "max_font_size": 76,
+      "min_font_size": 38,
+      "max_lines": 4,
+      "line_spacing_factor": 0.1,
+      "line_height_factor": 0.92,
+      "prefer_balanced_lines": true,
+      "prefer_single_line": false,
+      "text_color": [
+        255,
+        255,
+        255
+      ],
+      "shadow_color": [
+        0,
+        0,
+        0,
+        160
+      ],
+      "shadow_offset": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "subtitle",
+      "enabled": true,
+      "source": "subtitle_or_empty",
+      "box": [
+        61,
+        1101,
+        962,
+        1203
+      ],
+      "padding_x": 40,
+      "padding_y": 10,
+      "text_align": "center",
+      "vertical_align": "center",
+      "max_font_size": 39,
+      "min_font_size": 22,
+      "max_lines": 2,
+      "line_spacing_factor": 0.06,
+      "line_height_factor": 0.92,
+      "prefer_balanced_lines": true,
+      "prefer_single_line": true,
+      "text_color": [
+        255,
+        255,
+        255
+      ],
+      "shadow_color": [
+        0,
+        0,
+        0,
+        140
+      ],
+      "shadow_offset": [
+        1,
+        2
+      ]
+    }
+  ],
+  "layout_ai": {
+    "enabled": false,
+    "model": "gpt-4.1-mini",
+    "error": "OPENAI_API_KEY missing"
+  }
+}

@@ -746,3 +746,19 @@ Traceback (most recent call last):
   File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\telegram\request\_httpxrequest.py", line 316, in do_request
     raise NetworkError(f"httpx.{err.__class__.__name__}: {err}") from err
 telegram.error.NetworkError: httpx.ConnectError: 
+No error handlers are registered, logging exception.
+Traceback (most recent call last):
+  File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\telegram\ext\_application.py", line 1335, in process_update
+    await coroutine
+  File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\CompuLife\Desktop\news_bot\bot.py", line 4138, in handle_image_document_v2
+    await update.message.reply_text(f"\u0635\u0627\u0631 \u062e\u0637\u0623 \u0623\u062b\u0646\u0627\u0621 \u0627\u0644\u062a\u0635\u0645\u064a\u0645: {e}")
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\CompuLife\Desktop\news_bot\bot.py", line 993, in create_template_from_image
+    full_like = span_w >= int(width * 0.84)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\CompuLife\Desktop\news_bot\.venv312\Lib\site-packages\PIL\Image.py", line 3498, in open
+    raise UnidentifiedImageError(msg)
+PIL.UnidentifiedImageError: cannot identify image file <_io.BytesIO object at 0x000001F8D6C7BE20>
