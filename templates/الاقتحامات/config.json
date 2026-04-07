@@ -62,7 +62,7 @@
   "stat_word_vertical_offset": 16,
 
  
-  "stat_body_box": [250, 1460, 1382, 1688],
+  "stat_body_box": [250, 1500, 1382, 1728],
   "stat_body_text_color": [255, 255, 255],
   "stat_body_shadow_color": [0, 0, 0, 100],
   "stat_body_shadow_offset": [2, 3],
