@@ -835,6 +835,149 @@ def _score_text_box_readability(template_image: Image.Image, box: list[int]) -> 
     return (contrast_score * 1.35) + emptiness_score
 
 
+def detect_image_layout_from_placeholder(
+    template_image: Image.Image,
+    width: int,
+    height: int,
+    text_boxes: list[dict],
+) -> Optional[dict]:
+    rgb = template_image.convert("RGB")
+    px = rgb.load()
+    if px is None:
+        return None
+
+    # Keep image region above text whenever possible.
+    text_tops = []
+    for box_cfg in text_boxes or []:
+        raw_box = box_cfg.get("box") if isinstance(box_cfg, dict) else None
+        if isinstance(raw_box, (list, tuple)) and len(raw_box) == 4:
+            try:
+                text_tops.append(int(raw_box[1]))
+            except Exception:
+                pass
+    max_scan_bottom = min(height - 1, max(int(height * 0.22), (min(text_tops) - max(8, int(height * 0.01))) if text_tops else int(height * 0.72)))
+    if max_scan_bottom < int(height * 0.18):
+        max_scan_bottom = int(height * 0.72)
+
+    row_step = 2 if height >= 900 else 1
+    col_step = 3 if width >= 900 else 2
+    white_row_ratio = [0.0] * height
+    for y in range(0, max_scan_bottom, row_step):
+        total = 0
+        white = 0
+        for x in range(0, width, col_step):
+            r, g, b = px[x, y]
+            total += 1
+            # Bright + low chroma => likely empty placeholder region.
+            if r >= 228 and g >= 228 and b >= 228 and (max(r, g, b) - min(r, g, b)) <= 22:
+                white += 1
+        ratio = (white / total) if total else 0.0
+        for yy in range(y, min(y + row_step, height)):
+            white_row_ratio[yy] = ratio
+
+    # Smooth ratios to avoid noisy edges.
+    smoothed = [0.0] * height
+    for y in range(height):
+        acc = 0.0
+        cnt = 0
+        for k in range(max(0, y - 3), min(height, y + 4)):
+            acc += white_row_ratio[k]
+            cnt += 1
+        smoothed[y] = (acc / cnt) if cnt else 0.0
+
+    threshold = 0.68
+    runs = []
+    run_start = None
+    for y in range(0, max_scan_bottom):
+        if smoothed[y] >= threshold:
+            if run_start is None:
+                run_start = y
+        else:
+            if run_start is not None:
+                runs.append((run_start, y - 1))
+                run_start = None
+    if run_start is not None:
+        runs.append((run_start, max_scan_bottom - 1))
+
+    if not runs:
+        return None
+
+    min_run_h = max(40, int(height * 0.12))
+    ranked = []
+    for y1, y2 in runs:
+        run_h = y2 - y1 + 1
+        if run_h < min_run_h:
+            continue
+        avg_ratio = sum(smoothed[y1:y2 + 1]) / max(1, run_h)
+        score = (run_h * avg_ratio) - (y1 * 0.08)  # prefer larger and a bit higher.
+        ranked.append((score, y1, y2))
+    if not ranked:
+        return None
+    ranked.sort(reverse=True)
+    _, y1, y2 = ranked[0]
+
+    # Detect horizontal span of the placeholder within that band.
+    band_h = max(1, y2 - y1 + 1)
+    col_white_ratio = [0.0] * width
+    for x in range(0, width, col_step):
+        total = 0
+        white = 0
+        for y in range(y1, y2 + 1, row_step):
+            r, g, b = px[x, y]
+            total += 1
+            if r >= 228 and g >= 228 and b >= 228 and (max(r, g, b) - min(r, g, b)) <= 22:
+                white += 1
+        ratio = (white / total) if total else 0.0
+        for xx in range(x, min(x + col_step, width)):
+            col_white_ratio[xx] = ratio
+
+    col_threshold = 0.60
+    spans = []
+    span_start = None
+    for x in range(width):
+        if col_white_ratio[x] >= col_threshold:
+            if span_start is None:
+                span_start = x
+        else:
+            if span_start is not None:
+                spans.append((span_start, x - 1))
+                span_start = None
+    if span_start is not None:
+        spans.append((span_start, width - 1))
+
+    if not spans:
+        return {
+            "image_mode": "full",
+            "image_area_bottom": int(y2),
+            "template_cutouts": [{"shape": "rectangle", "box": [0, 0, width, int(y2)]}],
+        }
+
+    spans = sorted(spans, key=lambda s: (s[1] - s[0] + 1), reverse=True)
+    x1, x2 = spans[0]
+    span_w = x2 - x1 + 1
+    full_like = span_w >= int(width * 0.84)
+    if full_like:
+        return {
+            "image_mode": "full",
+            "image_area_bottom": int(y2),
+            "template_cutouts": [{"shape": "rectangle", "box": [0, 0, width, int(y2)]}],
+        }
+
+    l = max(0, x1)
+    r = min(width, x2 + 1)
+    t = max(0, y1)
+    b = min(height, y2 + 1)
+    if (r - l) < 100 or (b - t) < 80:
+        return None
+    return {
+        "image_mode": "box",
+        "image_box": [l, t, r, b],
+        "image_mask_box": [l, t, r, b],
+        "image_mask_shape": "rectangle",
+        "template_cutouts": [{"shape": "rectangle", "box": [l, t, r, b]}],
+    }
+
+
 def detect_dynamic_layout_heuristic(
     template_image: Image.Image,
     width: int,
@@ -939,6 +1082,14 @@ def detect_dynamic_layout_heuristic(
         },
     ]
     text_boxes = normalize_ai_text_boxes(text_boxes, width, height, max_font_size=max_font_size, min_font_size=min_font_size)
+    detected_image_layout = detect_image_layout_from_placeholder(
+        template_image=template_image,
+        width=width,
+        height=height,
+        text_boxes=text_boxes,
+    )
+    if isinstance(detected_image_layout, dict):
+        image_layout = detected_image_layout
     return {"text_boxes": text_boxes, "image_layout": image_layout}
 
 
@@ -1245,6 +1396,32 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
             "model": OPENAI_TEMPLATE_MODEL,
             "error": str(ai_error or "fallback_to_default"),
         }
+
+    # Final pass: detect real image placeholder from the template itself.
+    # This fixes cases where text is detected correctly but image region is not.
+    placeholder_image_layout = detect_image_layout_from_placeholder(
+        template_image=template_image,
+        width=width,
+        height=height,
+        text_boxes=config.get("text_boxes", []),
+    )
+    if isinstance(placeholder_image_layout, dict):
+        if placeholder_image_layout.get("image_mode") == "box":
+            config["image_mode"] = "box"
+            config["image_box"] = placeholder_image_layout.get("image_box", config.get("image_box"))
+            config["image_mask_box"] = placeholder_image_layout.get("image_mask_box", config.get("image_mask_box", config.get("image_box")))
+            config["image_mask_shape"] = placeholder_image_layout.get("image_mask_shape", "rectangle")
+            config["template_cutouts"] = placeholder_image_layout.get("template_cutouts", config.get("template_cutouts", []))
+            config.pop("image_area_bottom", None)
+        else:
+            config["image_mode"] = "full"
+            config["image_area_bottom"] = int(
+                placeholder_image_layout.get("image_area_bottom", config.get("image_area_bottom", int(height * 0.64)))
+            )
+            config["template_cutouts"] = placeholder_image_layout.get("template_cutouts", config.get("template_cutouts", []))
+            config.pop("image_box", None)
+            config.pop("image_mask_box", None)
+            config.pop("image_mask_shape", None)
     config["dynamic_elements"] = build_dynamic_elements_json(
         text_boxes=config.get("text_boxes", []),
         image_layout={
