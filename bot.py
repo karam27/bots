@@ -585,6 +585,31 @@ def make_default_logo_box(width: int, height: int) -> list[int]:
     return [int(l), int(t), int(r), int(b)]
 
 
+def normalize_logo_box(box: Optional[list[int]], width: int, height: int) -> list[int]:
+    fallback = make_default_logo_box(width=width, height=height)
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return fallback
+    try:
+        l, t, r, b = [int(v) for v in box]
+    except Exception:
+        return fallback
+    l = max(0, min(width - 2, l))
+    t = max(0, min(height - 2, t))
+    r = max(l + 2, min(width, r))
+    b = max(t + 2, min(height, b))
+    bw = r - l
+    bh = b - t
+    min_w = max(150, int(width * 0.22))
+    max_w = max(min_w + 10, int(width * 0.46))
+    min_h = max(52, int(height * 0.06))
+    max_h = max(min_h + 10, int(height * 0.18))
+
+    # If detected logo box is suspiciously small/large or too low, fallback to a robust standard box.
+    if bw < min_w or bw > max_w or bh < min_h or bh > max_h or t > int(height * 0.22):
+        return fallback
+    return [l, t, r, b]
+
+
 def build_default_template_config(template_name: str, folder_name: str, width: int, height: int) -> dict:
     text_left = max(40, int(width * 0.06))
     text_right = min(width - 40, int(width * 0.94))
@@ -1598,7 +1623,11 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         height=height,
     )
     # Keep original template logo visible after image insertion by restoring its box.
-    detected_logo_box = detect_logo_overlay_box(template_image, width=width, height=height)
+    detected_logo_box = normalize_logo_box(
+        detect_logo_overlay_box(template_image, width=width, height=height),
+        width=width,
+        height=height,
+    )
     if detected_logo_box:
         overlay_boxes = config.get("template_overlay_boxes")
         if not isinstance(overlay_boxes, list):
@@ -1608,7 +1637,7 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
         config["template_overlay_boxes"] = overlay_boxes
 
     if attached_logo_rel:
-        logo_box = detected_logo_box if detected_logo_box else make_default_logo_box(width=width, height=height)
+        logo_box = normalize_logo_box(detected_logo_box, width=width, height=height)
         image_overlays = config.get("image_overlays")
         if not isinstance(image_overlays, list):
             image_overlays = []
@@ -1663,9 +1692,13 @@ def create_default_template_config_file(folder_name: str, folder_path: str, imag
     config = build_default_template_config(folder_name, folder_name, width, height)
     config["name"] = folder_name.replace("_", " ").strip() or folder_name
     config["template_path"] = os.path.relpath(image_path, BASE_DIR).replace("\\", "/")
-    detected_logo_box = detect_logo_overlay_box(template_image, width=width, height=height)
+    detected_logo_box = normalize_logo_box(
+        detect_logo_overlay_box(template_image, width=width, height=height),
+        width=width,
+        height=height,
+    )
     if attached_logo_rel:
-        logo_box = detected_logo_box if detected_logo_box else make_default_logo_box(width=width, height=height)
+        logo_box = normalize_logo_box(detected_logo_box, width=width, height=height)
         config["image_overlays"] = [
             {
                 "path": attached_logo_rel,
@@ -3652,9 +3685,11 @@ def render_post(news_img: Image.Image, text: str, template_cfg: dict) -> Image.I
     if not has_logo_overlay:
         fallback_logo = get_default_brand_logo_path()
         if fallback_logo and os.path.isfile(fallback_logo):
-            guessed_logo_box = detect_logo_overlay_box(original_base, width=W, height=H)
-            if not guessed_logo_box:
-                guessed_logo_box = make_default_logo_box(width=W, height=H)
+            guessed_logo_box = normalize_logo_box(
+                detect_logo_overlay_box(original_base, width=W, height=H),
+                width=W,
+                height=H,
+            )
             runtime_overlays.append(
                 {
                     "path": os.path.relpath(fallback_logo, BASE_DIR).replace("\\", "/"),
