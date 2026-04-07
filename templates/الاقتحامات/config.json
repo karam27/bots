@@ -31,13 +31,13 @@
   "stat_separator": "|",
   "image_gradient_overlay": {
     "enabled": true,
-    "box": [0, 0, 1632, 1225],
+    "box": [0, 620, 1632, 1225],
     "direction": "vertical",
-    "start_color": [8, 14, 24, 24],
-    "end_color": [198, 38, 30, 170]
+    "start_color": [18, 22, 30, 0],
+    "end_color": [194, 38, 30, 146]
   },
   "foreground_gradient_overlay": {
-    "enabled": true,
+    "enabled": false,
     "box": [60, 760, 1572, 1470],
     "direction": "vertical",
     "start_color": [255, 255, 255, 22],
@@ -62,13 +62,13 @@
   "stat_word_vertical_offset": 16,
 
  
-  "stat_body_box": [250, 1488, 1382, 1810],
+  "stat_body_box": [250, 1460, 1382, 1688],
   "stat_body_text_color": [255, 255, 255],
   "stat_body_shadow_color": [0, 0, 0, 100],
   "stat_body_shadow_offset": [2, 3],
-  "stat_body_max_font_size": 88,
-  "stat_body_min_font_size": 58,
-  "stat_body_max_lines": 4,
+  "stat_body_max_font_size": 92,
+  "stat_body_min_font_size": 60,
+  "stat_body_max_lines": 2,
 
   "text_box": [151, 1541, 1481, 1783],
   "text_color": [255, 255, 255],
