@@ -543,6 +543,48 @@ def attach_template_font(folder_path: str) -> str:
     return f"templates/{os.path.basename(folder_path)}/{font_name}".replace("\\", "/")
 
 
+def get_default_brand_logo_path() -> Optional[str]:
+    candidates = [
+        os.path.join(TEMPLATES_DIR, "الاقتحامات", "logo.png"),
+        os.path.join(TEMPLATES_DIR, "breaking", "logo.png"),
+        os.path.join(TEMPLATES_DIR, "mutabaa_ikhbariya", "logo.png"),
+        os.path.join(BASE_DIR, "logo.png"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def attach_template_logo(folder_path: str) -> Optional[str]:
+    source_logo_path = get_default_brand_logo_path()
+    if not source_logo_path or not os.path.isfile(source_logo_path):
+        return None
+
+    ext = os.path.splitext(source_logo_path)[1].lower() or ".png"
+    target_name = f"logo{ext}"
+    target_logo_path = os.path.join(folder_path, target_name)
+    if not os.path.isfile(target_logo_path):
+        try:
+            shutil.copy2(source_logo_path, target_logo_path)
+        except Exception as e:
+            print(f"[Templates] unable to attach logo into '{folder_path}': {e}")
+            return None
+    return f"templates/{os.path.basename(folder_path)}/{target_name}".replace("\\", "/")
+
+
+def make_default_logo_box(width: int, height: int) -> list[int]:
+    pad_x = max(18, int(width * 0.02))
+    pad_y = max(16, int(height * 0.02))
+    logo_w = max(180, int(width * 0.28))
+    logo_h = max(54, int(height * 0.11))
+    r = max(logo_w + pad_x, width - pad_x)
+    l = max(0, r - logo_w)
+    t = pad_y
+    b = min(height, t + logo_h)
+    return [int(l), int(t), int(r), int(b)]
+
+
 def build_default_template_config(template_name: str, folder_name: str, width: int, height: int) -> dict:
     text_left = max(40, int(width * 0.06))
     text_right = min(width - 40, int(width * 0.94))
@@ -1468,6 +1510,7 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
     template_path = os.path.join(folder_path, "template.png")
     template_image.save(template_path, format="PNG")
     attach_template_font(folder_path)
+    attached_logo_rel = attach_template_logo(folder_path)
 
     config = build_default_template_config(template_name, folder_name, width, height)
     heuristic_layout = detect_dynamic_layout_heuristic(
@@ -1564,6 +1607,26 @@ def create_template_from_image(template_name: str, source_bytes: bytes) -> str:
             overlay_boxes.append(detected_logo_box)
         config["template_overlay_boxes"] = overlay_boxes
 
+    if attached_logo_rel:
+        logo_box = detected_logo_box if detected_logo_box else make_default_logo_box(width=width, height=height)
+        image_overlays = config.get("image_overlays")
+        if not isinstance(image_overlays, list):
+            image_overlays = []
+        has_logo_overlay = any(
+            isinstance(item, dict)
+            and os.path.basename(str(item.get("path", "") or "")).lower().startswith("logo")
+            for item in image_overlays
+        )
+        if not has_logo_overlay:
+            image_overlays.append(
+                {
+                    "path": attached_logo_rel,
+                    "box": [int(v) for v in logo_box],
+                    "remove_white_bg": False,
+                }
+            )
+        config["image_overlays"] = image_overlays
+
     config = ensure_image_window_cutouts(config, width=width, height=height)
     config_path = os.path.join(folder_path, "config.json")
     with open(config_path, "w", encoding="utf-8") as f:
@@ -1590,14 +1653,29 @@ def create_default_template_config_file(folder_name: str, folder_path: str, imag
     try:
         with Image.open(image_path) as img:
             width, height = img.size
+            template_image = img.convert("RGBA")
     except Exception as e:
         print(f"[Templates] unable to read image for '{folder_name}': {e}")
         return None
 
     attach_template_font(folder_path)
+    attached_logo_rel = attach_template_logo(folder_path)
     config = build_default_template_config(folder_name, folder_name, width, height)
     config["name"] = folder_name.replace("_", " ").strip() or folder_name
     config["template_path"] = os.path.relpath(image_path, BASE_DIR).replace("\\", "/")
+    detected_logo_box = detect_logo_overlay_box(template_image, width=width, height=height)
+    if attached_logo_rel:
+        logo_box = detected_logo_box if detected_logo_box else make_default_logo_box(width=width, height=height)
+        config["image_overlays"] = [
+            {
+                "path": attached_logo_rel,
+                "box": [int(v) for v in logo_box],
+                "remove_white_bg": False,
+            }
+        ]
+    if detected_logo_box:
+        config["template_overlay_boxes"] = [detected_logo_box]
+    config = ensure_image_window_cutouts(config, width=width, height=height)
     config_path = os.path.join(folder_path, "config.json")
     try:
         with open(config_path, "w", encoding="utf-8") as f:
@@ -2642,15 +2720,7 @@ def get_ffmpeg_paths() -> tuple[Optional[str], Optional[str]]:
 
 
 def get_default_montage_logo_path() -> Optional[str]:
-    candidates = [
-        os.path.join(TEMPLATES_DIR, "الاقتحامات", "logo.png"),
-        os.path.join(TEMPLATES_DIR, "breaking", "logo.png"),
-        os.path.join(TEMPLATES_DIR, "mutabaa_ikhbariya", "logo.png"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    return get_default_brand_logo_path()
 
 
 def get_video_dimensions(ffprobe_path: str, video_path: str) -> tuple[int, int]:
