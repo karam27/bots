@@ -2182,61 +2182,59 @@ def split_text_to_two_lines(draw, text: str, font, max_width: int) -> List[str]:
 def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, width: int, height: int, text: str):
     measure_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(measure_canvas)
-    montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
+    montage_font = os.path.join(BASE_DIR, "HEADLINERBOLD.otf")
+    if not os.path.isfile(montage_font):
+        montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
-    side_margin = max(80, int(width * 0.18))
-    inner_pad_x = max(12, int(width * 0.020))
-    max_text_width = width - side_margin * 2 - inner_pad_x * 2
+    side_margin = max(98, int(width * 0.22))
+    inner_pad_x = max(14, int(width * 0.022))
+    inner_pad_y = max(6, int(height * 0.010))
 
     cleaned = clean_text_safe(text)
     words = [word for word in cleaned.split() if word.strip()]
     word_count = len(words)
 
     if word_count <= 2:
-        font_size = max(52, int(width * 0.082))
+        font_size = max(62, int(width * 0.094))
     elif word_count <= 4:
-        font_size = max(46, int(width * 0.072))
+        font_size = max(56, int(width * 0.086))
     elif word_count <= 6:
-        font_size = max(40, int(width * 0.062))
+        font_size = max(48, int(width * 0.074))
     else:
-        font_size = max(34, int(width * 0.054))
+        font_size = max(40, int(width * 0.063))
 
-    min_font_size = max(22, int(font_size * 0.60))
+    min_font_size = max(24, int(font_size * 0.56))
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
-    fixed_band_height = max(92, int(height * 0.125))
+    fixed_band_height = max(82, int(height * 0.108))
     fixed_band_top = max(22, int(((height - fixed_band_height) / 2) + (height * 0.08)))
     fixed_band_bottom = min(height - 20, fixed_band_top + fixed_band_height)
-    split_ratio = 0.52 if len(lines) == 2 else 0.50
-    while font_size >= min_font_size:
-        font = ImageFont.truetype(font_path, font_size)
-        lines = split_text_to_two_lines(draw, cleaned, font, max_text_width)
-        widths = [text_bbox(draw, line, font)[0] for line in lines]
-        heights = [text_bbox(draw, line, font)[1] for line in lines]
-        band_height = fixed_band_bottom - fixed_band_top
-        split_y = fixed_band_top + int(band_height * split_ratio)
-        top_box_height = split_y - fixed_band_top
-        bottom_box_height = fixed_band_bottom - split_y
-        top_h = heights[0] if heights else 0
-        bottom_h = heights[1] if len(heights) > 1 else 0
-        width_ok = (max(widths) if widths else 0) <= max_text_width
-        height_ok = top_h <= max(1, top_box_height - 10) and bottom_h <= max(1, bottom_box_height - 10)
-        if width_ok and height_ok:
-            break
-        font_size -= 2
-
-    spacing = max(4, int(font_size * 0.08))
-    heights = [text_bbox(draw, line, font)[1] for line in lines]
-    max_line_height = max(heights) if heights else font_size
-    total_h = sum(heights) + spacing * max(0, len(lines) - 1)
+    split_ratio = 0.50
     band_left = side_margin
     band_right = width - side_margin
     band_top = fixed_band_top
     band_bottom = fixed_band_bottom
     band_height = band_bottom - band_top
-    band_height = band_bottom - band_top
     split_y = band_top + int(band_height * split_ratio)
+
+    max_text_width = max(1, (band_right - band_left) - (inner_pad_x * 2))
+    while font_size >= min_font_size:
+        font = ImageFont.truetype(font_path, font_size)
+        lines = split_text_to_two_lines(draw, cleaned, font, max_text_width)
+        widths = [text_bbox(draw, line, font)[0] for line in lines]
+        heights = [text_bbox(draw, line, font)[1] for line in lines]
+        top_box_height = split_y - band_top
+        bottom_box_height = band_bottom - split_y
+        top_h = heights[0] if heights else 0
+        bottom_h = heights[1] if len(heights) > 1 else 0
+        width_ok = (max(widths) if widths else 0) <= max_text_width
+        height_ok = top_h <= max(1, top_box_height - (inner_pad_y * 2)) and bottom_h <= max(1, bottom_box_height - (inner_pad_y * 2))
+        if width_ok and height_ok:
+            break
+        font_size -= 2
+
+    heights = [text_bbox(draw, line, font)[1] for line in lines]
 
     top_canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     top_draw = ImageDraw.Draw(top_canvas)
@@ -2258,24 +2256,23 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     top_draw.rectangle((band_left, band_top, band_right, split_y), fill=(255, 226, 0, 245))
     bottom_draw.rectangle((band_left, split_y, band_right, band_bottom), fill=(255, 255, 255, 245))
 
-    total_text_h = sum(heights) + spacing * max(0, len(lines) - 1)
-    y = band_top + int((band_height - total_text_h) / 2) - max(2, int(height * 0.002))
+    top_inner_top = band_top + inner_pad_y
+    top_inner_bottom = split_y - inner_pad_y
+    bottom_inner_top = split_y + inner_pad_y
+    bottom_inner_bottom = band_bottom - inner_pad_y
 
-    for idx, line in enumerate(lines):
+    for idx, line in enumerate(lines[:2]):
         rendered_text, draw_kwargs = get_text_render_parts(line, reshape_enabled=True, prefer_raqm=True)
-        wpx, hpx = text_bbox(draw, line, font)
-        x = int(resolve_text_x_in_box(draw, line, font, band_left, band_right, align="center"))
+        _, hpx = text_bbox(draw, line, font)
+        x = int(resolve_text_x_in_box(draw, line, font, band_left + inner_pad_x, band_right - inner_pad_x, align="center"))
         shadow_offset = max(1, int(font_size * 0.035))
-        text_y = y
-        if len(lines) == 2:
-            if idx == 0:
-                text_y = band_top + int((split_y - band_top - hpx) / 2) - max(1, int(height * 0.002))
-            else:
-                text_y = split_y + int((band_bottom - split_y - hpx) / 2) - max(1, int(height * 0.002))
+        if idx == 0:
+            text_y = top_inner_top + int((max(1, top_inner_bottom - top_inner_top) - hpx) / 2)
+        else:
+            text_y = bottom_inner_top + int((max(1, bottom_inner_bottom - bottom_inner_top) - hpx) / 2)
         target_draw = top_draw if idx == 0 else bottom_draw
         target_draw.text((x + shadow_offset, text_y + shadow_offset), rendered_text, font=font, fill=(0, 0, 0, 70), **draw_kwargs)
         target_draw.text((x, text_y), rendered_text, font=font, fill=(0, 0, 0, 255), **draw_kwargs)
-        y += hpx + spacing
 
     top_canvas.save(top_output_path, format="PNG")
     bottom_canvas.save(bottom_output_path, format="PNG")
