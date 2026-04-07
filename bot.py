@@ -2187,7 +2187,7 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
         montage_font = os.path.join(BASE_DIR, "HEADLINERMEDIUM.otf")
     fallback_font = get_preferred_project_font()
     font_path = ensure_existing_path(montage_font, fallback_font)
-    side_margin = max(98, int(width * 0.22))
+    side_margin = max(112, int(width * 0.25))
     inner_pad_x = max(14, int(width * 0.022))
     inner_pad_y = max(6, int(height * 0.010))
 
@@ -2196,18 +2196,18 @@ def create_montage_text_overlays(top_output_path: str, bottom_output_path: str, 
     word_count = len(words)
 
     if word_count <= 2:
-        font_size = max(62, int(width * 0.094))
+        font_size = max(68, int(width * 0.102))
     elif word_count <= 4:
-        font_size = max(56, int(width * 0.086))
+        font_size = max(61, int(width * 0.093))
     elif word_count <= 6:
-        font_size = max(48, int(width * 0.074))
+        font_size = max(52, int(width * 0.080))
     else:
-        font_size = max(40, int(width * 0.063))
+        font_size = max(44, int(width * 0.068))
 
-    min_font_size = max(24, int(font_size * 0.56))
+    min_font_size = max(26, int(font_size * 0.58))
     lines = [cleaned]
     font = ImageFont.truetype(font_path, font_size)
-    fixed_band_height = max(82, int(height * 0.108))
+    fixed_band_height = max(74, int(height * 0.096))
     fixed_band_top = max(22, int(((height - fixed_band_height) / 2) + (height * 0.08)))
     fixed_band_bottom = min(height - 20, fixed_band_top + fixed_band_height)
     split_ratio = 0.50
