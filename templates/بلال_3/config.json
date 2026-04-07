@@ -1,12 +1,12 @@
 {
-  "name": "بلال",
+  "name": "بلال 3",
   "enabled": true,
   "requires_name": false,
   "requires_text": true,
   "render_text": true,
   "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
-  "template_path": "templates/بلال/template.png",
-  "font_bold_path": "templates/بلال/HEADLINERBOLD.otf",
+  "template_path": "templates/بلال_3/template.png",
+  "font_bold_path": "templates/بلال_3/HEADLINERBOLD.otf",
   "image_mode": "full",
   "image_area_bottom": 819,
   "text_box": [
