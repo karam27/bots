@@ -2,6 +2,7 @@ import asyncio
 import atexit
 import os
 import json
+import secrets
 import re
 import subprocess
 import tempfile
@@ -12,6 +13,8 @@ import urllib.request
 import urllib.error
 import traceback
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from collections import deque
 from io import BytesIO
 from typing import Optional, List, Set
@@ -39,6 +42,7 @@ font_path = os.path.join(BASE_DIR, "Tajawal-Bold.ttf")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 ADMIN_STATE_PATH = os.path.join(DATA_DIR, "admin_state.json")
+USER_SESSIONS_PATH = os.path.join(DATA_DIR, "user_sessions.json")
 PILLOW_HAS_RAQM = bool(features.check("raqm"))
 ADMIN_PASSWORD = "1234"
 TEMPLATE_CACHE_KEY = "TEMPLATES"
@@ -194,12 +198,59 @@ def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
+def load_user_sessions() -> dict:
+    ensure_data_dir()
+    if not os.path.isfile(USER_SESSIONS_PATH):
+        return {}
+    try:
+        with open(USER_SESSIONS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_user_sessions(data: dict) -> None:
+    ensure_data_dir()
+    with open(USER_SESSIONS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def persist_login_role(telegram_user_id: int, role: str) -> None:
+    if role not in {"admin", "employee"}:
+        return
+    data = load_user_sessions()
+    data[str(int(telegram_user_id))] = {"role": role}
+    save_user_sessions(data)
+
+
+def clear_persisted_login(telegram_user_id: int) -> None:
+    data = load_user_sessions()
+    key = str(int(telegram_user_id))
+    if key not in data:
+        return
+    data.pop(key, None)
+    save_user_sessions(data)
+
+
+def get_persisted_login_role(telegram_user_id: int) -> Optional[str]:
+    entry = load_user_sessions().get(str(int(telegram_user_id)))
+    if not isinstance(entry, dict):
+        return None
+    role = entry.get("role")
+    return role if role in {"admin", "employee"} else None
+
+
 def default_admin_state() -> dict:
     return {
         "admin_password": ADMIN_PASSWORD,
         "max_employees": 0,
         "employee_ids": [],
         "enabled_templates": [],
+        # [{ "employee_id": int, "name": str, "login_time": str, "ts": float }]
+        "employee_login_log": [],
+        # str(telegram_user_id) -> pbkdf2 hex (see hash_employee_password)
+        "employee_password_hashes": {},
     }
 
 
@@ -222,6 +273,14 @@ def load_admin_state() -> dict:
         base["employee_ids"] = []
     if not isinstance(base.get("enabled_templates"), list):
         base["enabled_templates"] = []
+    log = base.get("employee_login_log")
+    if not isinstance(log, list):
+        base["employee_login_log"] = []
+    epw = base.get("employee_password_hashes")
+    if not isinstance(epw, dict):
+        base["employee_password_hashes"] = {}
+    base.pop("admin_chat_id", None)
+    base.pop("employee_login_last_notify", None)
     base["max_employees"] = max(0, int(base.get("max_employees", 0) or 0))
     return base
 
@@ -230,6 +289,161 @@ def save_admin_state(state: dict):
     ensure_data_dir()
     with open(ADMIN_STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def _ensure_employee_auth_pepper(state: dict) -> str:
+    p = state.get("employee_auth_pepper")
+    if isinstance(p, str) and len(p) >= 16:
+        return p
+    pepper = secrets.token_hex(16)
+    state["employee_auth_pepper"] = pepper
+    return pepper
+
+
+def hash_employee_password(state: dict, password: str) -> str:
+    pepper = _ensure_employee_auth_pepper(state)
+    dk = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        pepper.encode("utf-8"),
+        120_000,
+    )
+    return dk.hex()
+
+
+def verify_employee_password(state: dict, user_id: int, password: str) -> bool:
+    hashes = state.get("employee_password_hashes")
+    if not isinstance(hashes, dict):
+        return False
+    stored = hashes.get(str(int(user_id)))
+    if not stored or not isinstance(stored, str):
+        return False
+    computed = hash_employee_password(state, password)
+    return secrets.compare_digest(computed, stored)
+
+
+def employee_has_saved_password(state: dict, user_id: int) -> bool:
+    hashes = state.get("employee_password_hashes")
+    if not isinstance(hashes, dict):
+        return False
+    v = hashes.get(str(int(user_id)))
+    return isinstance(v, str) and len(v) > 0
+
+
+def format_login_timestamp_gaza() -> str:
+    """توقيت غزة (Asia/Gaza) مع مراعاة التوقيت الصيفي حسب قاعدة بيانات TZ."""
+    dt = datetime.now(ZoneInfo("Asia/Gaza"))
+    return dt.strftime("%Y-%m-%d %I:%M %p") + " غزة"
+
+
+def _telegram_display_name(telegram_user) -> str:
+    if telegram_user is None:
+        return "—"
+    full_name = " ".join(
+        p
+        for p in (
+            getattr(telegram_user, "first_name", None) or "",
+            getattr(telegram_user, "last_name", None) or "",
+        )
+        if p
+    ).strip()
+    # أسماء من غير حروف/أرقام (مثل كشيدة "ـ" فقط أو شرطات) تُعتبر فارغة ونعرض اليوزر أو "—"
+    if full_name and not any(ch.isalpha() or ch.isdigit() for ch in full_name):
+        full_name = ""
+    if full_name:
+        return full_name
+    un = getattr(telegram_user, "username", None)
+    return f"@{un}" if un else "—"
+
+
+def format_employee_login_block(employee_id: int, name: str, login_time: str) -> str:
+    return (
+        "Employee Login Notification:\n"
+        f"Employee ID: {employee_id}\n"
+        f"Name: {name.strip() if name and str(name).strip() else '—'}\n"
+        f"Login Time: {login_time}"
+    )
+
+
+def append_employee_login_to_state(state: dict, telegram_user, dedupe_seconds: float = 90.0) -> None:
+    if telegram_user is None:
+        return
+    if not isinstance(state, dict):
+        return
+    log = state.get("employee_login_log")
+    if not isinstance(log, list):
+        log = []
+    uid = int(telegram_user.id)
+    now = time.time()
+    for ev in reversed(log):
+        if not isinstance(ev, dict):
+            continue
+        try:
+            if int(ev.get("employee_id", -1)) != uid:
+                continue
+        except (TypeError, ValueError):
+            continue
+        try:
+            prev = float(ev.get("ts", 0))
+        except (TypeError, ValueError):
+            prev = 0.0
+        if (now - prev) < dedupe_seconds:
+            return
+        break
+    name = _telegram_display_name(telegram_user)
+    entry = {
+        "employee_id": uid,
+        "name": name,
+        "login_time": format_login_timestamp_gaza(),
+        "ts": now,
+    }
+    log.append(entry)
+    max_entries = 800
+    if len(log) > max_entries:
+        log = log[-max_entries:]
+    state["employee_login_log"] = log
+
+
+def build_employee_login_log_report(state: dict) -> str:
+    log = state.get("employee_login_log") if isinstance(state, dict) else None
+    if not isinstance(log, list) or not log:
+        return ""
+    blocks = []
+    for ev in log:
+        if not isinstance(ev, dict):
+            continue
+        try:
+            eid = int(ev.get("employee_id", 0))
+        except (TypeError, ValueError):
+            continue
+        name = str(ev.get("name", "—") or "—")
+        lt = str(ev.get("login_time", "—") or "—")
+        blocks.append(format_employee_login_block(eid, name, lt))
+    return "\n\n".join(blocks)
+
+
+def split_telegram_message_chunks(text: str, max_len: int = 4000) -> List[str]:
+    if len(text) <= max_len:
+        return [text]
+    chunks: List[str] = []
+    current = ""
+    for block in text.split("\n\n"):
+        sep = "\n\n" if current else ""
+        candidate = current + sep + block
+        if len(candidate) <= max_len:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            if len(block) > max_len:
+                for i in range(0, len(block), max_len):
+                    chunks.append(block[i : i + max_len])
+                current = ""
+            else:
+                current = block
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def enable_template_for_employees(template_id: str) -> dict:
@@ -256,7 +470,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("إضافة قالب جديد", callback_data="admin:add_template")],
             [InlineKeyboardButton("إدارة القوالب", callback_data="admin:templates")],
             [InlineKeyboardButton("تحديد عدد الموظفين", callback_data="admin:max_employees")],
-            [InlineKeyboardButton("عرض الإعدادات", callback_data="admin:status")],
+            [InlineKeyboardButton("سجل دخول الموظفين", callback_data="admin:employee_logins")],
             [InlineKeyboardButton("رجوع للبداية", callback_data="nav:start")],
         ]
     )
@@ -392,10 +606,6 @@ async def show_start_menu(target_message, context: ContextTypes.DEFAULT_TYPE, te
     if not templates:
         prompt = text or "أهلاً بك.\nلا يوجد قوالب حالياً، لكن يمكنك الدخول كمدير لإضافة قالب جديد."
         await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
-        if fixed_stat_word:
-            await update.message.reply_text("Ø£Ø±Ø³Ù„ Ø§Ù„Ø¢Ù† Ø§Ù„Ø¬Ù…Ù„Ø© Ø§Ù„ØªÙŠ Ø³ØªØ¸Ù‡Ø± Ø¨Ø§Ù„Ù„ÙˆÙ† Ø§Ù„Ø£Ø¨ÙŠØ¶ ØªØ­Øª.")
-        else:
-            await update.message.reply_text("Ø£Ø±Ø³Ù„ Ø§Ù„Ø¢Ù† Ø§Ù„ÙƒÙ„Ù…Ø© Ø§Ù„ØªÙŠ Ø³ØªØ¸Ù‡Ø± Ø¯Ø§Ø®Ù„ Ø§Ù„ØµÙ†Ø¯ÙˆÙ‚ Ø§Ù„Ø£Ø²Ø±Ù‚.")
         return
 
     prompt = text or "أهلاً بك.\nاختر طريقة الدخول:"
@@ -421,10 +631,22 @@ async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+def modes_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("• Hudhud Studio (التصميم)", callback_data="mode:design")],
+            [InlineKeyboardButton("Hudhud Edit (المونتاج)", callback_data="mode:montage")],
+            [InlineKeyboardButton("رجوع للبداية", callback_data="nav:start")],
+        ]
+    )
+
+
 def preserve_session(context: ContextTypes.DEFAULT_TYPE) -> dict:
     keep_keys = {
         "role",
         "awaiting_admin_password",
+        "awaiting_employee_password",
+        "employee_password_is_setup",
         "awaiting_max_employees",
         "awaiting_new_template_name",
         "awaiting_new_template_image",
@@ -452,7 +674,9 @@ def clear_obsolete_auth_state(context: ContextTypes.DEFAULT_TYPE):
     stale_keys = []
     for key in list(context.user_data.keys()):
         lowered = str(key).lower()
-        if lowered == "awaiting_admin_password":
+        if lowered in ("awaiting_admin_password", "awaiting_employee_password"):
+            continue
+        if lowered == "employee_password_is_setup":
             continue
         if any(token in lowered for token in ("password", "passcode", "login", "auth")):
             stale_keys.append(key)
@@ -576,8 +800,8 @@ def attach_template_logo(folder_path: str) -> Optional[str]:
 def make_default_logo_box(width: int, height: int) -> list[int]:
     pad_x = max(18, int(width * 0.02))
     pad_y = max(16, int(height * 0.02))
-    logo_w = max(180, int(width * 0.28))
-    logo_h = max(54, int(height * 0.11))
+    logo_w = max(220, int(width * 0.34))
+    logo_h = max(72, int(height * 0.14))
     r = max(logo_w + pad_x, width - pad_x)
     l = max(0, r - logo_w)
     t = pad_y
@@ -599,9 +823,9 @@ def normalize_logo_box(box: Optional[list[int]], width: int, height: int) -> lis
     b = max(t + 2, min(height, b))
     bw = r - l
     bh = b - t
-    min_w = max(150, int(width * 0.22))
+    min_w = max(190, int(width * 0.28))
     max_w = max(min_w + 10, int(width * 0.46))
-    min_h = max(52, int(height * 0.06))
+    min_h = max(66, int(height * 0.08))
     max_h = max(min_h + 10, int(height * 0.18))
 
     # If detected logo box is suspiciously small/large or too low, fallback to a robust standard box.
@@ -2705,7 +2929,7 @@ def templates_keyboard(templates: dict) -> InlineKeyboardMarkup:
         buttons.append(
             [InlineKeyboardButton(f"📌 {name} [{tid}]", callback_data=f"tpl:{make_template_callback_id(tid)}")]
         )
-    buttons.append([InlineKeyboardButton("🎬 مونتاج", callback_data="mode:montage")])
+    buttons.append([InlineKeyboardButton("🔙 رجوع للأوضاع", callback_data="mode:back")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -4416,6 +4640,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    user = update.effective_user
+    if user:
+        persisted = get_persisted_login_role(user.id)
+        if persisted == "employee":
+            clear_persisted_login(user.id)
+        elif persisted == "admin":
+            context.user_data["role"] = "admin"
+            templates = get_templates(context, force_reload=True)
+            state = load_admin_state()
+            await update.message.reply_text(
+                admin_status_text(state, templates),
+                reply_markup=admin_menu_keyboard(),
+            )
+            return
     await show_start_menu(update.message, context)
 
 
@@ -4443,27 +4681,46 @@ async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = q.from_user.id
     employee_ids = set(state.get("employee_ids", []))
     max_employees = int(state.get("max_employees", 0) or 0)
+    in_list = user_id in employee_ids
+    has_pw = employee_has_saved_password(state, user_id)
 
-    if user_id not in employee_ids:
+    if not in_list and not has_pw:
         if max_employees > 0 and len(employee_ids) >= max_employees:
             await q.edit_message_text("وصلت لعدد الموظفين المسموح. راجع المدير لزيادة العدد.")
             return
-        employee_ids.add(user_id)
-        state["employee_ids"] = sorted(employee_ids)
-        save_admin_state(state)
+        context.user_data["awaiting_employee_password"] = True
+        context.user_data["employee_password_is_setup"] = True
+        await q.edit_message_text(
+            "أول مرة: أرسل كلمة سر خاصة بك (ستحتاجها في كل دخول كموظف)."
+        )
+        return
 
-    context.user_data["role"] = "employee"
-    await q.edit_message_text("تم تسجيلك كموظف.")
-    await send_templates_menu(q.message, context)
+    if in_list and has_pw:
+        context.user_data["awaiting_employee_password"] = True
+        context.user_data["employee_password_is_setup"] = False
+        await q.edit_message_text("أرسل كلمة سر الموظف.")
+        return
+
+    if in_list and not has_pw:
+        context.user_data["awaiting_employee_password"] = True
+        context.user_data["employee_password_is_setup"] = True
+        await q.edit_message_text(
+            "حدّد الآن كلمة سر خاصة بك كموظف (ستُستخدم في المرات القادمة)."
+        )
+        return
+
+    # كلمة محفوظة لكن غير مُدرَج في القائمة (بيانات قديمة): تحقق ثم إعادة الإدراج عند النجاح
+    context.user_data["awaiting_employee_password"] = True
+    context.user_data["employee_password_is_setup"] = False
+    await q.edit_message_text("أرسل كلمة سر الموظف.")
 
 
 async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    if not await safe_answer_callback(q):
-        return
-
     if context.user_data.get("role") != "admin":
         await safe_answer_callback(q, "هذه القائمة للمدير فقط.", show_alert=True)
+        return
+    if not await safe_answer_callback(q):
         return
 
     templates = get_templates(context, force_reload=True)
@@ -4500,6 +4757,21 @@ async def admin_menu_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("أرسل الآن عدد الموظفين المسموح به كرقم فقط.")
         return
 
+    if action == "employee_logins":
+        report = build_employee_login_log_report(state)
+        chat = q.message.chat if q.message else update.effective_chat
+        chat_id = chat.id if chat else None
+        if chat_id is None:
+            return
+        # لا نعدّل الرسالة الحالية: لو النص ولوحة الأزرار نفس الشيء، تيليجرام يرفض (message is not modified)
+        # ويمنع إرسال السجل.
+        if not report.strip():
+            await context.bot.send_message(chat_id=chat_id, text="لا يوجد سجل دخول موظفين بعد.")
+            return
+        for chunk in split_telegram_message_chunks(report):
+            await context.bot.send_message(chat_id=chat_id, text=chunk)
+        return
+
     if action == "status":
         await q.edit_message_text(admin_status_text(state, templates), reply_markup=admin_menu_keyboard())
         return
@@ -4509,6 +4781,8 @@ async def nav_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not await safe_answer_callback(q):
         return
+    if q.from_user:
+        clear_persisted_login(q.from_user.id)
     context.user_data.clear()
     await q.edit_message_text("تمت العودة للبداية.")
     await show_start_menu(q.message, context)
@@ -4667,6 +4941,17 @@ async def mode_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     mode = q.data.split(":", 1)[1]
+    if mode == "back":
+        await q.edit_message_text("اختر الوضع:", reply_markup=modes_keyboard())
+        return
+
+    if mode == "design":
+        reset_design_state(context)
+        clear_stat_prompt_state(context)
+        clear_montage_state(context)
+        await send_templates_menu(q.message, context)
+        return
+
     if mode != "montage":
         await safe_answer_callback(q, "وضع غير مدعوم.", show_alert=True)
         return
@@ -4917,12 +5202,69 @@ async def handle_text_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data.pop("awaiting_admin_password", None)
         context.user_data["role"] = "admin"
+        if update.effective_user:
+            persist_login_role(update.effective_user.id, "admin")
         templates = get_templates(context, force_reload=True)
         await update.message.reply_text("تم تسجيلك كمدير.")
         await update.message.reply_text(
             admin_status_text(state, templates),
             reply_markup=admin_menu_keyboard(),
         )
+        return
+
+    if context.user_data.get("awaiting_employee_password"):
+        value = (update.message.text or "").strip()
+        if not value:
+            await update.message.reply_text("أرسل كلمة السر كنص.")
+            return
+        user = update.effective_user
+        if not user:
+            return
+        uid = user.id
+        state = load_admin_state()
+        is_setup = bool(context.user_data.get("employee_password_is_setup"))
+        hashes = state.get("employee_password_hashes")
+        if not isinstance(hashes, dict):
+            hashes = {}
+            state["employee_password_hashes"] = hashes
+
+        if is_setup:
+            if len(value) < 4:
+                await update.message.reply_text("كلمة السر قصيرة. أرسل 4 أحرف أو أرقام على الأقل.")
+                return
+            hashes[str(uid)] = hash_employee_password(state, value)
+            employee_ids = set(state.get("employee_ids", []))
+            employee_ids.add(uid)
+            state["employee_ids"] = sorted(employee_ids)
+            append_employee_login_to_state(state, user)
+            save_admin_state(state)
+            context.user_data.pop("awaiting_employee_password", None)
+            context.user_data.pop("employee_password_is_setup", None)
+            context.user_data["role"] = "employee"
+            await update.message.reply_text("تم حفظ كلمة السر وتسجيلك كموظف.")
+            await update.message.reply_text("اختر الوضع:", reply_markup=modes_keyboard())
+            return
+
+        if not verify_employee_password(state, uid, value):
+            await update.message.reply_text("كلمة السر غير صحيحة.")
+            return
+
+        employee_ids = set(state.get("employee_ids", []))
+        max_employees = int(state.get("max_employees", 0) or 0)
+        if uid not in employee_ids:
+            if max_employees > 0 and len(employee_ids) >= max_employees:
+                await update.message.reply_text("وصلت لعدد الموظفين المسموح. راجع المدير.")
+                return
+            employee_ids.add(uid)
+            state["employee_ids"] = sorted(employee_ids)
+
+        append_employee_login_to_state(state, user)
+        save_admin_state(state)
+        context.user_data.pop("awaiting_employee_password", None)
+        context.user_data.pop("employee_password_is_setup", None)
+        context.user_data["role"] = "employee"
+        await update.message.reply_text("تم تسجيل دخولك كموظف.")
+        await update.message.reply_text("اختر الوضع:", reply_markup=modes_keyboard())
         return
 
     if context.user_data.get("awaiting_montage_text"):

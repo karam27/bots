@@ -1,0 +1,241 @@
+{
+  "name": "قالب المهندس محمد خليفة",
+  "enabled": true,
+  "requires_name": false,
+  "requires_text": true,
+  "render_text": true,
+  "select_prompt": "أرسل الصورة التي تريد استخدامها في التصميم.",
+  "template_path": "templates/قالب_المهندس_محمد_خليفة/template.png",
+  "font_bold_path": "templates/قالب_المهندس_محمد_خليفة/HEADLINERBOLD.otf",
+  "image_mode": "full",
+  "image_area_bottom": 513,
+  "text_box": [
+    82,
+    522,
+    1293,
+    721
+  ],
+  "template_cutouts": [
+    {
+      "shape": "rectangle",
+      "box": [
+        0,
+        0,
+        1376,
+        513
+      ]
+    }
+  ],
+  "max_font_size": 46,
+  "min_font_size": 34,
+  "text_color": [
+    255,
+    255,
+    255
+  ],
+  "shadow_color": [
+    0,
+    0,
+    0,
+    160
+  ],
+  "shadow_offset": [
+    2,
+    3
+  ],
+  "top_bias": 0.3,
+  "text_align": "center",
+  "short_text_align": "center",
+  "text_padding_x": 68,
+  "text_padding_y": 20,
+  "line_spacing_factor": 0.22,
+  "max_lines": 4,
+  "short_centered_layout": true,
+  "short_center_offset": 0,
+  "short_fill_ratio": 0.65,
+  "text_layout_engine": "smart_boxes",
+  "text_box_separator": "|",
+  "text_boxes": [
+    {
+      "id": "title",
+      "enabled": true,
+      "source": "headline_or_full",
+      "segment_index": 0,
+      "box": [
+        193,
+        522,
+        1183,
+        659
+      ],
+      "padding_x": 38,
+      "padding_y": 8,
+      "text_align": "center",
+      "vertical_align": "center",
+      "max_font_size": 46,
+      "min_font_size": 34,
+      "max_lines": 3,
+      "line_spacing_factor": 0.08,
+      "line_height_factor": 0.92,
+      "prefer_balanced_lines": true,
+      "prefer_single_line": false,
+      "text_color": [
+        255,
+        255,
+        255
+      ],
+      "shadow_color": [
+        0,
+        0,
+        0,
+        170
+      ],
+      "shadow_offset": [
+        2,
+        3
+      ]
+    },
+    {
+      "id": "subtitle",
+      "enabled": true,
+      "source": "subtitle_or_empty",
+      "segment_index": 0,
+      "box": [
+        193,
+        665,
+        1183,
+        737
+      ],
+      "padding_x": 33,
+      "padding_y": 6,
+      "text_align": "center",
+      "vertical_align": "center",
+      "max_font_size": 34,
+      "min_font_size": 21,
+      "max_lines": 2,
+      "line_spacing_factor": 0.06,
+      "line_height_factor": 0.92,
+      "prefer_balanced_lines": true,
+      "prefer_single_line": true,
+      "text_color": [
+        255,
+        255,
+        255
+      ],
+      "shadow_color": [
+        0,
+        0,
+        0,
+        150
+      ],
+      "shadow_offset": [
+        1,
+        2
+      ]
+    }
+  ],
+  "layout_ai": {
+    "enabled": false,
+    "model": "gpt-4.1-mini",
+    "error": "OPENAI_API_KEY missing"
+  },
+  "dynamic_elements": {
+    "elements": [
+      {
+        "type": "text",
+        "id": "title",
+        "position": {
+          "x": 193,
+          "y": 522,
+          "width": 990,
+          "height": 137
+        },
+        "alignment": "center",
+        "verticalAlignment": "center",
+        "autoResize": true,
+        "padding": {
+          "x": 38,
+          "y": 8
+        },
+        "responsive": {
+          "short": {
+            "fontScale": 1.14,
+            "preferSingleLine": true
+          },
+          "medium": {
+            "fontScale": 1.0,
+            "preferBalancedLines": true
+          },
+          "long": {
+            "fontScale": 0.82,
+            "maxLines": 3
+          },
+          "overflow": "shrink_to_fit"
+        }
+      },
+      {
+        "type": "text",
+        "id": "subtitle",
+        "position": {
+          "x": 193,
+          "y": 665,
+          "width": 990,
+          "height": 72
+        },
+        "alignment": "center",
+        "verticalAlignment": "center",
+        "autoResize": true,
+        "padding": {
+          "x": 33,
+          "y": 6
+        },
+        "responsive": {
+          "short": {
+            "fontScale": 1.14,
+            "preferSingleLine": true
+          },
+          "medium": {
+            "fontScale": 1.0,
+            "preferBalancedLines": true
+          },
+          "long": {
+            "fontScale": 0.82,
+            "maxLines": 2
+          },
+          "overflow": "shrink_to_fit"
+        }
+      },
+      {
+        "type": "image",
+        "id": "image_main",
+        "position": {
+          "x": 0,
+          "y": 0,
+          "width": 1376,
+          "height": 513
+        },
+        "fit": "cover",
+        "crop": "smart"
+      }
+    ]
+  },
+  "template_overlay_boxes": [
+    [
+      882,
+      16,
+      1349,
+      123
+    ]
+  ],
+  "image_overlays": [
+    {
+      "path": "templates/قالب_المهندس_محمد_خليفة/logo.png",
+      "box": [
+        882,
+        16,
+        1349,
+        123
+      ],
+      "remove_white_bg": false
+    }
+  ]
+}

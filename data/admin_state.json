@@ -1,8 +1,9 @@
 {
   "admin_password": "1234",
-  "max_employees": 11,
+  "max_employees": 14,
   "employee_ids": [
     841986535,
+    918425950,
     1107450520
   ],
   "enabled_templates": [
@@ -18,5 +19,60 @@
     "عبد",
     "قالب الصور",
     "محمد"
-  ]
+  ],
+  "employee_login_log": [
+    {
+      "employee_id": 1107450520,
+      "name": "karam Al Nabih",
+      "login_time": "2026-04-08 04:36 PM UTC",
+      "ts": 1775666168.9988585
+    },
+    {
+      "employee_id": 1107450520,
+      "name": "karam Al Nabih",
+      "login_time": "2026-04-08 04:40 PM UTC",
+      "ts": 1775666432.7808535
+    },
+    {
+      "employee_id": 841986535,
+      "name": "ــ",
+      "login_time": "2026-04-08 04:40 PM UTC",
+      "ts": 1775666457.0558758
+    },
+    {
+      "employee_id": 918425950,
+      "name": "mohammed khalifa",
+      "login_time": "2026-04-09 03:10 PM UTC",
+      "ts": 1775747451.4208896
+    },
+    {
+      "employee_id": 1107450520,
+      "name": "karam Al Nabih",
+      "login_time": "2026-04-09 06:17 PM غزة",
+      "ts": 1775747858.7409508
+    },
+    {
+      "employee_id": 1107450520,
+      "name": "karam Al Nabih",
+      "login_time": "2026-04-10 02:44 PM غزة",
+      "ts": 1775821489.3355732
+    },
+    {
+      "employee_id": 1107450520,
+      "name": "karam Al Nabih",
+      "login_time": "2026-04-10 03:12 PM غزة",
+      "ts": 1775823156.8360593
+    },
+    {
+      "employee_id": 841986535,
+      "name": "ــ",
+      "login_time": "2026-04-10 04:21 PM غزة",
+      "ts": 1775827304.611477
+    }
+  ],
+  "employee_password_hashes": {
+    "1107450520": "c27bee3de1a0716d6c6531072a50321c2ff0db3c69f29b209e855a440d68aebb",
+    "841986535": "b3531d682dc77ac101a34e9ad0d45d1aa9fa7253238c7474fd551cfb8ba37645"
+  },
+  "employee_auth_pepper": "9aa86643ded7cc5adf490efaa7fe52dc"
 }
