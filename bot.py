@@ -15,7 +15,7 @@ import traceback
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from collections import deque
+from collections import defaultdict, deque
 from io import BytesIO
 from typing import Optional, List, Set
 
@@ -48,6 +48,110 @@ ADMIN_PASSWORD = "1234"
 TEMPLATE_CACHE_KEY = "TEMPLATES"
 TEMPLATE_CACHE_SIGNATURE_KEY = "TEMPLATES_SIGNATURE"
 DEFAULT_TEMPLATE_ID = "classic"
+
+# ----- الهدهد Hudhud (هوية المنتج) -----
+PRODUCT_NAME_AR = "الهدهد"
+PRODUCT_NAME_EN = "Hudhud"
+
+
+def hudhud_short_welcome() -> str:
+    return (
+        f"أهلاً بك في {PRODUCT_NAME_AR} 🐦\n"
+        "منصة ذكية لإدارة وتسريع إنتاج المحتوى الإخباري — من التصميم إلى المونتاج.\n\n"
+        "⚡ غالباً ما يكتمل المخرج خلال دقيقة تقريباً عند توفر القوالب والوسائط.\n\n"
+        "اختر طريقة الدخول:"
+    )
+
+
+def hudhud_about_text() -> str:
+    ai_line = (
+        "• Hudhud AI: تحليل تخطيط القوالب عند الإضافة (OpenAI) مع احتياطي ذكي محلي."
+        if OPENAI_API_KEY
+        else "• Hudhud AI: تخطيط تلقائي للقوالب الجديدة (محلي)، ويمكن تفعيل OpenAI عبر OPENAI_API_KEY."
+    )
+    return (
+        f"📌 {PRODUCT_NAME_AR} ({PRODUCT_NAME_EN})\n\n"
+        "منصة/بوت لإدارة وتسريع إنتاج المحتوى الإخباري، من التصميم إلى المونتاج، بشكل شبه تلقائي.\n\n"
+        "🎯 المشكلة التي نعالجها:\n"
+        "• بطء إنتاج التصاميم الإخبارية\n"
+        "• الحاجة لفريق كامل (مصمم + مونتير)\n"
+        "• تأخر النشر بسبب ضغط العمل\n"
+        "• عدم توحيد الجودة\n\n"
+        "🚀 الحل:\n"
+        "• تصاميم إخبارية سريعة عبر القوالب\n"
+        "• مونتاج فيديو مع نص متحرك (Hudhud Edit)\n"
+        "• جودة موحّدة وهوية بصرية ثابتة\n\n"
+        "⚙️ كيف يعمل؟\n"
+        "1) تسجيل دخول → اختيار الوضع (تصميم أو مونتاج)\n"
+        "2) التصميم: اختيار قالب → صورة الخبر → النص\n"
+        "3) المونتاج: فيديو → نص يظهر على الشاشة\n\n"
+        "🧩 أقسام المشروع:\n"
+        "• Hudhud Studio — التصميم بالقوالب الجاهزة\n"
+        "• Hudhud Edit — المونتاج السريع (يحتاج ffmpeg/ffprobe على الخادم)\n"
+        "• Hudhud Bot — الأتمتة عبر تيليجرام (أنت هنا)\n"
+        f"{ai_line}\n\n"
+        "💡 اقتراح قالب حسب النص: /suggest ثم فكرة الخبر"
+    )
+
+
+# (كلمات مفتاحية عربية/إنجليزية، أنماط تطابق معرّف أو اسم القالب، سبب العرض)
+TEMPLATE_SUGGESTION_RULES: list[tuple[list[str], list[str], str]] = [
+    (["عاجل", "عاجلة", "طارئ", "حصري", "لحظة", "breaking", "urgent"], ["breaking"], "خبر عاجل / سرعة النشر"),
+    (
+        ["شهيد", "شهيدة", "استشهد", "استشهاد", "شهداء", "martyr"],
+        ["martyr", "شهيد", "الشهيد", "martyr"],
+        "تغطية شهداء",
+    ),
+    (
+        ["اقتحام", "اقتحامات", "مستوطن", "مستوطنة", "مستوطنين"],
+        ["الاقتحامات", "اقتحام"],
+        "تغطية اقتحامات / مستوطنات",
+    ),
+    (
+        ["متابعة", "مباشر", "تطورات", "لحظة بلحظة", "أخباري"],
+        ["mutabaa", "akhbari", "متابعة", "أخباري"],
+        "متابعة إخبارية / تطورات",
+    ),
+    (
+        ["صورة", "صور", "ألبوم", "معرض"],
+        ["قالب الصور", "الصور على"],
+        "تركيز على صور متعددة أو صورة على صورة",
+    ),
+    (
+        ["عبد"],
+        ["عبد"],
+        "قوالب مرتبطة بالاسم/التصميم المخزّن",
+    ),
+    (
+        ["محمد", "خليفة", "مهندس"],
+        ["محمد", "خليفة", "المهندس"],
+        "قوالب التصميم المسمّاة (إن وُجدت)",
+    ),
+]
+
+
+def suggest_templates_for_news_text(text: str, available_templates: dict) -> list[tuple[str, str, str]]:
+    """اقتراح قوالب حسب كلمات النص (بدون تعلّم من أسلوب الصفحة — ذلك يبقى لاحقاً)."""
+    if not text.strip() or not available_templates:
+        return []
+    score: dict[str, int] = defaultdict(int)
+    reasons: dict[str, str] = {}
+    for keywords, id_parts, reason_ar in TEMPLATE_SUGGESTION_RULES:
+        if not any(k in text for k in keywords):
+            continue
+        for tid, cfg in available_templates.items():
+            name = str(cfg.get("name", "") or "")
+            if any(part in tid or part in name for part in id_parts):
+                score[tid] += 3
+                reasons[tid] = reason_ar
+    ranked = sorted(score.items(), key=lambda x: -x[1])
+    out: list[tuple[str, str, str]] = []
+    for tid, sc in ranked:
+        if sc <= 0:
+            continue
+        out.append((tid, str(available_templates[tid].get("name", tid)), reasons.get(tid, "")))
+    return out
+
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -460,6 +564,7 @@ def main_role_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("مدير", callback_data="role:admin")],
             [InlineKeyboardButton("موظف", callback_data="role:employee")],
+            [InlineKeyboardButton(f"ℹ️ عن {PRODUCT_NAME_AR}", callback_data="nav:about")],
         ]
     )
 
@@ -595,7 +700,7 @@ def admin_status_text(state: dict, templates: dict) -> str:
     ]
     enabled_line = "، ".join(enabled_names) if enabled_names else "لا يوجد"
     return (
-        "لوحة المدير\n"
+        f"لوحة المدير — {PRODUCT_NAME_AR}\n"
         f"عدد الموظفين: {employee_count_text(state)}\n"
         f"القوالب المفعلة للموظفين: {enabled_line}"
     )
@@ -604,11 +709,14 @@ def admin_status_text(state: dict, templates: dict) -> str:
 async def show_start_menu(target_message, context: ContextTypes.DEFAULT_TYPE, text: Optional[str] = None):
     templates = get_templates(context)
     if not templates:
-        prompt = text or "أهلاً بك.\nلا يوجد قوالب حالياً، لكن يمكنك الدخول كمدير لإضافة قالب جديد."
+        prompt = text or (
+            f"أهلاً بك في {PRODUCT_NAME_AR}.\n"
+            "لا يوجد قوالب حالياً — يمكنك الدخول كمدير لإضافة قالب جديد."
+        )
         await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
         return
 
-    prompt = text or "أهلاً بك.\nاختر طريقة الدخول:"
+    prompt = text or hudhud_short_welcome()
     await target_message.reply_text(prompt, reply_markup=main_role_keyboard())
 
 
@@ -626,7 +734,7 @@ async def send_templates_menu(target_message, context: ContextTypes.DEFAULT_TYPE
         return
 
     await target_message.reply_text(
-        "اختر قالب:",
+        "🎨 Hudhud Studio — اختر قالباً للتصميم:",
         reply_markup=templates_keyboard(available_templates),
     )
 
@@ -636,8 +744,39 @@ def modes_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("• Hudhud Studio (التصميم)", callback_data="mode:design")],
             [InlineKeyboardButton("Hudhud Edit (المونتاج)", callback_data="mode:montage")],
+            [
+                InlineKeyboardButton("Hudhud Bot (الأتمتة)", callback_data="nav:bot_info"),
+                InlineKeyboardButton("Hudhud AI", callback_data="nav:ai_info"),
+            ],
             [InlineKeyboardButton("رجوع للبداية", callback_data="nav:start")],
         ]
+    )
+
+
+def hudhud_bot_info_text() -> str:
+    return (
+        "🤖 Hudhud Bot — الأتمتة\n\n"
+        "هذا البوت يشغّل مسار العمل كاملاً على تيليجرام: تسجيل، اختيار قالب، استلام الصور/النصوص، "
+        "وتصدير جاهز للنشر دون التنقل بين أدوات متعددة.\n\n"
+        "↩️ ارجع إلى «اختر الوضع» من الرسالة السابقة."
+    )
+
+
+def hudhud_ai_info_text() -> str:
+    if OPENAI_API_KEY:
+        return (
+            "🧠 Hudhud AI — الذكاء\n\n"
+            "• عند إضافة قالب جديد: يمكن تحليل الصورة عبر OpenAI لاقتراح صناديق النص والصورة.\n"
+            "• يوجد احتياطي محلي ذكي إذا تعذّر التحليل.\n"
+            "• اقتراح قالب حسب نص الخبر: الأمر /suggest\n\n"
+            f"ملاحظة: «التعلم من أسلوب الصفحة» غير مفعّل بعد — ميزة مستقبلية."
+        )
+    return (
+        "🧠 Hudhud AI — الذكاء\n\n"
+        "• تخطيط تلقائي للقوالب الجديدة (تحليل محلي للفراغات والصور).\n"
+        "• لتحليل أدق عبر النماذج: اضبط OPENAI_API_KEY في ملف البيئة.\n"
+        "• اقتراح قالب حسب نص الخبر: /suggest\n\n"
+        f"«التعلم من أسلوب الصفحة» — مخطط للمستقبل."
     )
 
 
@@ -4664,6 +4803,63 @@ async def templates_cmd_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_templates_menu(update.message, context)
 
 
+async def help_cmd_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"📖 مساعدة {PRODUCT_NAME_AR}\n\n"
+        "/start — البداية وتسجيل الدخول (مدير / موظف)\n"
+        "/templates — اختيار قالب للتصميم (Hudhud Studio)\n"
+        "/suggest نص الخبر — اقتراح قالب حسب كلمات النص\n"
+        "/help — هذه الرسالة\n\n"
+        "بعد اختيار الوضع:\n"
+        "• التصميم: قالب → صورة الخبر → النص\n"
+        "• المونتاج: فيديو → نص يظهر على الشاشة (Hudhud Edit)"
+    )
+
+
+async def suggest_cmd_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("role") not in {"admin", "employee"}:
+        await update.message.reply_text("سجّل دخولك أولاً عبر /start (مدير أو موظف).")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "استخدم: /suggest ثم نص الخبر أو الفكرة\n"
+            "مثال:\n/suggest عاجل اقتحام مستوطنة ومتابعة مباشرة"
+        )
+        return
+    query = " ".join(args).strip()
+    templates = get_templates(context, force_reload=True)
+    state = load_admin_state()
+    available = get_enabled_templates(templates, state, context.user_data.get("role"))
+    if not available:
+        await update.message.reply_text("لا توجد قوالب متاحة لك حالياً.")
+        return
+    suggestions = suggest_templates_for_news_text(query, available)
+    if not suggestions:
+        for tid in (DEFAULT_TEMPLATE_ID, "breaking", "classic"):
+            if tid in available:
+                suggestions = [
+                    (
+                        tid,
+                        str(available[tid].get("name", tid)),
+                        "لم أجد كلمات مفتاحية واضحة — جرّب: عاجل، شهيد، اقتحام، متابعة. هذا اقتراح افتراضي.",
+                    )
+                ]
+                break
+        if not suggestions:
+            tid = next(iter(available.keys()))
+            suggestions = [
+                (tid, str(available[tid].get("name", tid)), "اختر القالب يدوياً من /templates إن رغبت.")
+            ]
+    lines = [f"🧭 {PRODUCT_NAME_AR} — اقتراح قالب (حسب كلمات النص):", ""]
+    for i, (tid, name, why) in enumerate(suggestions[:5], 1):
+        lines.append(f"{i}) {name}  [{tid}]")
+        if why:
+            lines.append(f"   └ {why}")
+        lines.append("")
+    await update.message.reply_text("\n".join(lines).strip())
+
+
 async def role_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not await safe_answer_callback(q):
@@ -4781,6 +4977,36 @@ async def nav_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not await safe_answer_callback(q):
         return
+    action = (q.data.split(":", 1)[1] if ":" in q.data else "")
+
+    if action == "about":
+        await q.edit_message_text(
+            hudhud_about_text(),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("↩️ رجوع", callback_data="nav:back_welcome")]]
+            ),
+        )
+        return
+    if action == "back_welcome":
+        await q.edit_message_text(hudhud_short_welcome(), reply_markup=main_role_keyboard())
+        return
+    if action == "bot_info":
+        await q.edit_message_text(
+            hudhud_bot_info_text(),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("↩️ رجوع", callback_data="mode:back")]]
+            ),
+        )
+        return
+    if action == "ai_info":
+        await q.edit_message_text(
+            hudhud_ai_info_text(),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("↩️ رجوع", callback_data="mode:back")]]
+            ),
+        )
+        return
+
     if q.from_user:
         clear_persisted_login(q.from_user.id)
     context.user_data.clear()
@@ -4961,7 +5187,9 @@ async def mode_cb_v2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_montage_state(context)
     context.user_data["awaiting_montage_video"] = True
     await q.edit_message_text(
-        "تم اختيار وضع المونتاج.\nأرسل الآن فيديو MP4 أو MOV، وبعده سأطلب منك النص المتحرك."
+        "🎬 Hudhud Edit — المونتاج\n\n"
+        "أرسل الآن فيديو (مثلاً MP4 أو MOV)، ثم سأطلب منك النص الذي يظهر على الشاشة.\n"
+        "يتطلّب المونتاج تثبيت ffmpeg و ffprobe على الخادم (أو مسارها في .env)."
     )
 
 
@@ -5470,6 +5698,8 @@ def main():
 
         app.add_handler(CommandHandler("start", start_v2))
         app.add_handler(CommandHandler("templates", templates_cmd_v2))
+        app.add_handler(CommandHandler("help", help_cmd_v2))
+        app.add_handler(CommandHandler("suggest", suggest_cmd_v2))
         app.add_handler(CallbackQueryHandler(role_cb_v2, pattern=r"^role:"))
         app.add_handler(CallbackQueryHandler(mode_cb_v2, pattern=r"^mode:"))
         app.add_handler(CallbackQueryHandler(admin_menu_cb_v2, pattern=r"^admin:"))
